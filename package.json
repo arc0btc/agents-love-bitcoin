@@ -1,0 +1,24 @@
+{
+  "name": "agents-love-bitcoin",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "deploy:dry-run": "npx wrangler deploy --dry-run",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "npx wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/base": "^2.0.0",
+    "@scure/btc-signer": "^2.0.1",
+    "hono": "^4.6.0"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agents-love-bitcoin",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat_v2"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": { "enabled": false },
+
+  // Custom domain
+  "routes": [{ "pattern": "agentslovebitcoin.com", "custom_domain": true }],
+
+  "vars": {
+    "ENVIRONMENT": "production"
+  },
+
+  // KV namespace — rate limiting, caching, genesis checks
+  "kv_namespaces": [
+    { "binding": "ALB_KV", "id": "placeholder-create-via-wrangler" }
+  ],
+
+  // Durable Object binding — primary storage (SQLite)
+  "durable_objects": {
+    "bindings": [
+      { "name": "ALB_DO", "class_name": "AlbDO" }
+    ]
+  },
+
+  // DO migrations
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["AlbDO"] }
+  ],
+
+  // Service binding to worker-logs via RPC
+  "services": [
+    { "binding": "LOGS", "service": "worker-logs-production", "entrypoint": "LogsRPC" }
+  ],
+
+  // Static frontend assets
+  "assets": { "directory": "./public" }
+
+  /**
+   * Secrets (set via `wrangler secret put`):
+   * - ADMIN_API_KEY — Admin endpoint auth
+   * - AGENT_NEWS_INTERNAL_KEY — For agent-news API calls (if needed)
+   */
+}
