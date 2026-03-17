@@ -18,7 +18,7 @@ me.use("/me/*", btcAuthMiddleware, meteringMiddleware);
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
 
   // Check registration
   const globalDoId = c.env.GLOBAL_DO.idFromName("global");
@@ -52,7 +52,7 @@ me.get("/me/profile", async (c) => {
 
 /** GET /api/me/email — Agent's provisioned email details. */
 me.get("/me/email", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
 
   const globalDoId = c.env.GLOBAL_DO.idFromName("global");
   const globalDo = c.env.GLOBAL_DO.get(globalDoId);
@@ -85,7 +85,7 @@ me.get("/me/email", async (c) => {
 
 /** GET /api/me/email/inbox — List inbox messages (paginated). */
 me.get("/me/email/inbox", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
 
   const limit = parseInt(c.req.query("limit") ?? "20", 10);
   const offset = parseInt(c.req.query("offset") ?? "0", 10);
@@ -109,7 +109,7 @@ me.get("/me/email/inbox", async (c) => {
 
 /** GET /api/me/email/inbox/:id — Read a single inbox message (marks as read). */
 me.get("/me/email/inbox/:id", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
   const messageId = c.req.param("id");
 
   const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
@@ -129,7 +129,7 @@ me.get("/me/email/inbox/:id", async (c) => {
 
 /** PUT /api/me/email — Update email forwarding address. */
 me.put("/me/email", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
   const body = await c.req.json() as { forward_to?: string | null };
 
   const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
@@ -153,7 +153,7 @@ me.put("/me/email", async (c) => {
 
 /** GET /api/me/usage — Current metering window and allocation status. */
 me.get("/me/usage", async (c) => {
-  const btcAddress = c.get("btcAddress");
+  const btcAddress = c.get("btcAddress")!;
 
   const { meter, remaining, resetAt } = await getMeterState(
     c.env.ALB_KV,

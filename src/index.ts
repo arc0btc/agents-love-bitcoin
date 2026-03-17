@@ -13,6 +13,7 @@ import onboardingRoutes from "./routes/onboarding";
 import meRoutes from "./routes/me";
 import paidRoutes from "./routes/paid";
 import { handleEmail } from "./email";
+import { VERSION } from "./version";
 import type { Env, AppVariables } from "./lib/types";
 
 // Re-export Durable Object classes for wrangler
@@ -39,7 +40,7 @@ app.all("*", (c) => {
     error: { code: "NOT_FOUND", message: "Endpoint not found" },
     meta: {
       timestamp: new Date().toISOString(),
-      version: "0.1.0",
+      version: VERSION,
       requestId: c.get("requestId") ?? "unknown",
     },
   }, 404);

@@ -133,9 +133,12 @@ export async function verifyPayment(
     env
   );
 
-  // Use the V2 /settle endpoint (handles both sponsored and non-sponsored)
+  // Route sponsored transactions to /relay, non-sponsored to /settle
+  const isSponsored = Boolean(paymentPayload.extensions?.sponsored);
+  const relayEndpoint = isSponsored ? "relay" : "settle";
+
   try {
-    const settleResponse = await fetch(`${relayUrl}/settle`, {
+    const settleResponse = await fetch(`${relayUrl}/${relayEndpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

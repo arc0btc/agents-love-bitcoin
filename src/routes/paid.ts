@@ -45,7 +45,7 @@ paid.get(
     try {
       const response = await fetch(`${AGENT_NEWS_API}/briefs/${date}`, {
         headers: {
-          "X-BTC-Address": c.get("btcAddress"),
+          "X-BTC-Address": c.get("btcAddress")!,
         },
       });
 
@@ -80,7 +80,7 @@ paid.post(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-BTC-Address": c.get("btcAddress"),
+          "X-BTC-Address": c.get("btcAddress")!,
         },
       });
 
@@ -110,7 +110,7 @@ paid.get(
     try {
       const response = await fetch(`${AGENT_NEWS_API}/reports/weekly`, {
         headers: {
-          "X-BTC-Address": c.get("btcAddress"),
+          "X-BTC-Address": c.get("btcAddress")!,
         },
       });
 
@@ -143,7 +143,7 @@ paid.get(
     try {
       const response = await fetch(`${AGENT_NEWS_API}/analytics/signals`, {
         headers: {
-          "X-BTC-Address": c.get("btcAddress"),
+          "X-BTC-Address": c.get("btcAddress")!,
         },
       });
 
@@ -173,7 +173,7 @@ paid.get(
     try {
       const response = await fetch(`${AGENT_NEWS_API}/analytics/agents`, {
         headers: {
-          "X-BTC-Address": c.get("btcAddress"),
+          "X-BTC-Address": c.get("btcAddress")!,
         },
       });
 

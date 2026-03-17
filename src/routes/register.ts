@@ -20,13 +20,14 @@ import { resolveGenesisAgent } from "../services/agent-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
 import { okResponse, errorResponse } from "../lib/helpers";
 import { EMAIL_DOMAIN, FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
+import { VERSION } from "../version";
 import type { Env, AppVariables, RegistrationData } from "../lib/types";
 
 const register = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 register.post("/register", dualSigAuthMiddleware, async (c) => {
-  const btcAddress = c.get("btcAddress");
-  const stxAddress = c.get("stxAddress");
+  const btcAddress = c.get("btcAddress")!;
+  const stxAddress = c.get("stxAddress")!;
 
   // ── Step 5: Check genesis status ──────────────────────────────────────
   const resolved = await resolveGenesisAgent(btcAddress, c.env);
@@ -51,7 +52,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
         },
         meta: {
           timestamp: new Date().toISOString(),
-          version: "0.1.0",
+          version: VERSION,
           requestId: c.get("requestId"),
         },
       }, status);
@@ -156,7 +157,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   };
 
   // ── Step 10: Update GlobalDO ──────────────────────────────────────────
-  await globalDo.fetch(
+  const indexResp = await globalDo.fetch(
     new Request("http://internal/index-agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -170,6 +171,10 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       }),
     })
   );
+
+  if (!indexResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Agent registered but global indexing failed — retry registration", 500);
+  }
 
   // ── Step 11: Return success ───────────────────────────────────────────
   const data: RegistrationData = {

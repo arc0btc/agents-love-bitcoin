@@ -16,8 +16,8 @@ export interface Env {
 
 /** Variables set on Hono context by middleware */
 export interface AppVariables {
-  btcAddress: string;
-  stxAddress: string;
+  btcAddress?: string;
+  stxAddress?: string;
   requestId: string;
   /** Set by x402 middleware when payment is verified */
   x402Payer?: string;

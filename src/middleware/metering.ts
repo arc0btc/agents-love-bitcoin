@@ -7,14 +7,13 @@
  */
 
 import type { MiddlewareHandler } from "hono";
-import { FREE_ALLOCATION, PAID_RATE, X402_HEADERS } from "../lib/constants";
+import { FREE_ALLOCATION, PAID_RATE, X402_HEADERS, WINDOW_SECONDS } from "../lib/constants";
 import { errorResponse } from "../lib/helpers";
+import { VERSION } from "../version";
 import type { Env, AppVariables, MeterState } from "../lib/types";
 import { buildPaymentRequiredBody, getTreasuryAddress } from "../services/x402";
 
 type ALBMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }>;
-
-const WINDOW_SECONDS = 86400; // 24 hours
 
 function isWindowExpired(windowStart: number): boolean {
   return Math.floor(Date.now() / 1000) - windowStart >= WINDOW_SECONDS;
@@ -81,7 +80,7 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
         },
         meta: {
           timestamp: new Date().toISOString(),
-          version: "0.1.0",
+          version: VERSION,
           requestId: c.get("requestId") ?? "unknown",
         },
       },

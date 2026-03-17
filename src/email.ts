@@ -148,6 +148,8 @@ export async function handleEmail(
 
   // Check if agent has forwarding configured
   const emailResp = await agentDo.fetch(new Request("http://internal/email"));
+  if (!emailResp.ok) return;
+
   const { email } = await emailResp.json() as {
     email: { forward_to: string | null; active: number } | null;
   };

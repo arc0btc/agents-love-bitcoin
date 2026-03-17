@@ -48,7 +48,7 @@ export const SBTC_CONTRACTS: Record<string, { address: string; name: string }> =
     name: "sbtc-token",
   },
   testnet: {
-    address: "ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM",
+    address: "ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT",
     name: "sbtc-token",
   },
 };
@@ -70,10 +70,13 @@ export const PAID_RATE = {
 
 /** x402 header names (x402 V2 standard) */
 export const X402_HEADERS = {
-  PAYMENT_REQUIRED: "payment-required",
-  PAYMENT_SIGNATURE: "payment-signature",
-  PAYMENT_RESPONSE: "payment-response",
+  PAYMENT_REQUIRED: "X-Payment-Required",
+  PAYMENT_SIGNATURE: "X-Payment-Signature",
+  PAYMENT_RESPONSE: "X-Payment-Response",
 } as const;
+
+/** Rolling metering window duration (seconds) — 24 hours */
+export const WINDOW_SECONDS = 86400;
 
 /** Relay settle timeout (ms) */
 export const RELAY_SETTLE_TIMEOUT_MS = 65_000;

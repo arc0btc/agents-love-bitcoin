@@ -14,8 +14,9 @@
  */
 
 import type { MiddlewareHandler } from "hono";
-import { X402_HEADERS } from "../lib/constants";
+import { X402_HEADERS, FREE_ALLOCATION, WINDOW_SECONDS } from "../lib/constants";
 import { errorResponse } from "../lib/helpers";
+import { VERSION } from "../version";
 import type { Env, AppVariables } from "../lib/types";
 import {
   buildPaymentRequiredBody,
@@ -62,9 +63,7 @@ export function x402PaymentGate(config: X402GateConfig): ALBMiddleware {
     const url = c.req.url;
 
     // Check for payment-signature header
-    const paymentSigHeader =
-      c.req.header(X402_HEADERS.PAYMENT_SIGNATURE) ??
-      c.req.header("X-Payment-Signature");
+    const paymentSigHeader = c.req.header(X402_HEADERS.PAYMENT_SIGNATURE);
 
     if (!paymentSigHeader) {
       return return402(c, url, config.description, payTo, config.priceSats);
@@ -108,7 +107,7 @@ export function x402PaymentGate(config: X402GateConfig): ALBMiddleware {
           },
           meta: {
             timestamp: new Date().toISOString(),
-            version: "0.1.0",
+            version: VERSION,
             requestId: c.get("requestId") ?? "unknown",
           },
         },
@@ -163,10 +162,9 @@ export function x402MeterOverflow(config: X402GateConfig): ALBMiddleware {
       requests: number;
     }>(kvKey, "json");
 
-    const WINDOW_SECONDS = 86400;
     const now = Math.floor(Date.now() / 1000);
     const windowExpired = !meter || now - meter.windowStart >= WINDOW_SECONDS;
-    const hasFreeCalls = windowExpired || meter.requests < 100;
+    const hasFreeCalls = windowExpired || meter.requests < FREE_ALLOCATION.maxRequests;
 
     if (hasFreeCalls) {
       // Free allocation available — let metering middleware handle counting
@@ -178,9 +176,7 @@ export function x402MeterOverflow(config: X402GateConfig): ALBMiddleware {
     const payTo = resolvePayTo(config.payTo, c);
     const url = c.req.url;
 
-    const paymentSigHeader =
-      c.req.header(X402_HEADERS.PAYMENT_SIGNATURE) ??
-      c.req.header("X-Payment-Signature");
+    const paymentSigHeader = c.req.header(X402_HEADERS.PAYMENT_SIGNATURE);
 
     if (!paymentSigHeader) {
       return return402(c, url, config.description, payTo, config.priceSats);
