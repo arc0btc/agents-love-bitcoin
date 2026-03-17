@@ -24,7 +24,7 @@ export async function resolveGenesisAgent(
 ): Promise<ResolveResult> {
   const config: GenesisGateConfig = {
     kv: env.ALB_KV,
-    requireName: true, // ALB requires AIBTC name for email provisioning
+    requireName: false, // Name resolved separately via landing-page API
   };
   return resolve(btcAddress, config);
 }
