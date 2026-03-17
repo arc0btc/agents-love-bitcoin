@@ -1,5 +1,5 @@
 /**
- * POST /api/register — Dual-sig BIP-137+SIP-018 registration with genesis gate and DO provisioning.
+ * POST /api/register — Dual-sig BIP-322+SIP-018 registration with genesis gate and DO provisioning.
  *
  * Flow (from onboarding-flow-spec.md §4.2):
  * 1. Parse + validate headers (done by dualSigAuthMiddleware)
