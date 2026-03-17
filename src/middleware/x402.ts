@@ -238,7 +238,7 @@ function return402(
       },
       meta: {
         timestamp: new Date().toISOString(),
-        version: "0.1.0",
+        version: VERSION,
         requestId: (c.get("requestId") as string) ?? "unknown",
       },
     },

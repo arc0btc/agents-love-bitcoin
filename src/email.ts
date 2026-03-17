@@ -155,6 +155,10 @@ export async function handleEmail(
   };
 
   if (email?.forward_to && email.active) {
-    await message.forward(email.forward_to);
+    try {
+      await message.forward(email.forward_to);
+    } catch {
+      // Forwarding failure is non-fatal — message is already stored in inbox
+    }
   }
 }

@@ -76,6 +76,9 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   const isRegResp = await globalDo.fetch(
     new Request(`http://internal/is-registered/${btcAddress}`)
   );
+  if (!isRegResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
+  }
   const { registered } = await isRegResp.json() as { registered: boolean };
 
   if (registered) {
@@ -84,9 +87,15 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     const agentDo = c.env.AGENT_DO.get(agentDoId);
 
     const profileResp = await agentDo.fetch(new Request("http://internal/profile"));
+    if (!profileResp.ok) {
+      return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch agent profile", 500);
+    }
     const { profile } = await profileResp.json() as { profile: Record<string, unknown> | null };
 
     const emailResp = await agentDo.fetch(new Request("http://internal/email"));
+    if (!emailResp.ok) {
+      return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch agent email config", 500);
+    }
     const { email } = await emailResp.json() as { email: Record<string, unknown> | null };
 
     const data: RegistrationData = {
@@ -116,6 +125,9 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   const nameCheckResp = await globalDo.fetch(
     new Request(`http://internal/is-name-taken?name=${encodeURIComponent(aibtcName)}&exclude=${encodeURIComponent(btcAddress)}`)
   );
+  if (!nameCheckResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to check name uniqueness", 500);
+  }
   const { taken } = await nameCheckResp.json() as { taken: boolean };
   if (taken) {
     return errorResponse(
