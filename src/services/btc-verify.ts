@@ -1,7 +1,10 @@
 /**
- * BIP-137/322 Bitcoin signature verification for ALB.
+ * BIP-322/137 Bitcoin signature verification for ALB.
  *
  * Ported from aibtcdev/landing-page bitcoin-verify.ts.
+ * BIP-322 is the primary standard for native segwit (bc1q) addresses.
+ * BIP-137 is kept as a fallback for legacy wallets that still produce
+ * compact 65-byte signatures with segwit header bytes (39-42).
  * Supports P2WPKH (bc1q) only — taproot (bc1p) not supported per PRD.
  */
 
@@ -226,8 +229,13 @@ export type BtcVerifyResult =
   | { valid: false; error: string };
 
 /**
- * Verify a Bitcoin signature (BIP-137 or BIP-322) for a given address and message.
+ * Verify a Bitcoin signature (BIP-322 or BIP-137) for a given address and message.
  * Only P2WPKH (bc1q) addresses are supported.
+ *
+ * For native segwit (bc1q), BIP-322 is tried first — it is the correct standard.
+ * BIP-137 is kept as a fallback for wallets that still produce compact 65-byte
+ * signatures with segwit header bytes (39-42). For legacy/P2SH addresses,
+ * BIP-137 is tried first since BIP-322 does not apply.
  */
 export function verifyBtcSignature(
   btcAddress: string,
@@ -236,22 +244,31 @@ export function verifyBtcSignature(
 ): BtcVerifyResult {
   try {
     const sigBytes = new Uint8Array(Buffer.from(signature, "base64"));
+    const isSegwit = btcAddress.startsWith("bc1q") || btcAddress.startsWith("tb1q");
 
-    if (isBip137Signature(sigBytes)) {
+    // For non-segwit addresses, try BIP-137 first (the only applicable standard).
+    if (!isSegwit && isBip137Signature(sigBytes)) {
       const verified = verifyBip137(btcAddress, message, signature);
       return verified ? { valid: true } : { valid: false, error: "Invalid BIP-137 signature" };
     }
 
-    // BIP-322 P2WPKH path
+    // BIP-322 P2WPKH path — primary for bc1q addresses.
     if (bip322VerifyP2WPKHCore(signature, btcAddress, bip322TaggedHash(message))) {
       return { valid: true };
     }
-    // Legacy hash fallback
+    // Legacy hash fallback (older signing tools prepend varint length).
     if (bip322VerifyP2WPKHCore(signature, btcAddress, bip322TaggedHashLegacy(message))) {
       return { valid: true };
     }
 
-    return { valid: false, error: "Invalid BIP-322 signature" };
+    // BIP-137 fallback for bc1q — some wallets still produce compact signatures
+    // with segwit header bytes (39-42) instead of BIP-322 witness format.
+    if (isSegwit && isBip137Signature(sigBytes)) {
+      const verified = verifyBip137(btcAddress, message, signature);
+      if (verified) return { valid: true };
+    }
+
+    return { valid: false, error: "Signature verification failed (tried BIP-322 and BIP-137)" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown verification error";
     return { valid: false, error: msg };
