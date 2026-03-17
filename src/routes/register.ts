@@ -1,5 +1,5 @@
 /**
- * POST /api/register — Dual-sig BIP-137+SIP-018 registration with genesis gate and DO provisioning.
+ * POST /api/register — Dual-sig BIP-322+SIP-018 registration with genesis gate and DO provisioning.
  *
  * Flow (from onboarding-flow-spec.md §4.2):
  * 1. Parse + validate headers (done by dualSigAuthMiddleware)
@@ -7,8 +7,8 @@
  * 3. Verify BTC signature (done by dualSigAuthMiddleware)
  * 4. Verify STX signature (done by dualSigAuthMiddleware)
  * 5. Check genesis status (aibtc.com lookup + KV cache)
- * 6. Check existing registration (idempotent — return existing profile if found)
- * 7. Fetch AIBTC name
+ * 6. Resolve deterministic agent name (landing-page API)
+ * 7. Check existing registration (idempotent — return existing profile if found)
  * 8. Check name uniqueness
  * 9. Create AgentDO (profile + email + stats)
  * 10. Update GlobalDO (directory index + address resolution + stats)
@@ -17,6 +17,7 @@
 
 import { Hono } from "hono";
 import { resolveGenesisAgent } from "../services/agent-resolver";
+import { resolveAgentName, toEmailSlug } from "../services/name-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
 import { okResponse, errorResponse } from "../lib/helpers";
 import { EMAIL_DOMAIN, FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
@@ -32,10 +33,9 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   // ── Step 5: Check genesis status ──────────────────────────────────────
   const resolved = await resolveGenesisAgent(btcAddress, c.env);
   if (!resolved.ok) {
-    const statusMap: Record<string, 400 | 403 | 502> = {
+    const statusMap: Record<string, 403 | 502> = {
       NOT_FOUND: 403,
       NOT_GENESIS: 403,
-      NO_NAME: 400,
       UPSTREAM_ERROR: 502,
     };
     const status = statusMap[resolved.code] ?? 400;
@@ -59,17 +59,23 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     }
 
     const codeMap: Record<string, string> = {
-      NO_NAME: "VALIDATION_ERROR",
       UPSTREAM_ERROR: "UPSTREAM_ERROR",
     };
     return errorResponse(c, codeMap[resolved.code] ?? resolved.code, resolved.error, status);
   }
 
   const agent = resolved.agent;
-  const aibtcName = agent.aibtcName!;
-  const emailAddress = `${aibtcName}@${EMAIL_DOMAIN}`;
 
-  // ── Step 6: Check existing registration (idempotent) ──────────────────
+  // ── Step 6: Resolve deterministic agent name ─────────────────────────
+  const nameResult = await resolveAgentName(btcAddress);
+  if (!nameResult.ok) {
+    return errorResponse(c, "NAME_RESOLUTION_ERROR", nameResult.error, 502);
+  }
+  const agentName = nameResult.name;
+  const emailSlug = toEmailSlug(agentName);
+  const emailAddress = `${emailSlug}@${EMAIL_DOMAIN}`;
+
+  // ── Step 7: Check existing registration (idempotent) ──────────────────
   const globalDoId = c.env.GLOBAL_DO.idFromName("global");
   const globalDo = c.env.GLOBAL_DO.get(globalDoId);
 
@@ -102,7 +108,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       agent: {
         btc_address: btcAddress,
         stx_address: stxAddress,
-        aibtc_name: aibtcName,
+        aibtc_name: agentName,
         bns_name: agent.bnsName,
         level: agent.level,
         level_name: agent.levelName,
@@ -121,9 +127,9 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     return okResponse(c, data, 200);
   }
 
-  // ── Step 7-8: Check name uniqueness ───────────────────────────────────
+  // ── Step 8: Check name uniqueness ────────────────────────────────────
   const nameCheckResp = await globalDo.fetch(
-    new Request(`http://internal/is-name-taken?name=${encodeURIComponent(aibtcName)}&exclude=${encodeURIComponent(btcAddress)}`)
+    new Request(`http://internal/is-name-taken?name=${encodeURIComponent(emailSlug)}&exclude=${encodeURIComponent(btcAddress)}`)
   );
   if (!nameCheckResp.ok) {
     return errorResponse(c, "INTERNAL_ERROR", "Failed to check name uniqueness", 500);
@@ -149,7 +155,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       body: JSON.stringify({
         btcAddress,
         stxAddress,
-        aibtcName,
+        aibtcName: agentName,
         bnsName: agent.bnsName,
         level: agent.level,
         levelName: agent.levelName,
@@ -176,8 +182,8 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       body: JSON.stringify({
         btcAddress,
         stxAddress,
-        aibtcName,
-        displayName: agent.bnsName ?? aibtcName,
+        aibtcName: agentName,
+        displayName: agent.bnsName ?? agentName,
         level: agent.level,
         emailAddress,
       }),
@@ -193,7 +199,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     agent: {
       btc_address: btcAddress,
       stx_address: stxAddress,
-      aibtc_name: aibtcName,
+      aibtc_name: agentName,
       bns_name: agent.bnsName,
       level: agent.level,
       level_name: agent.levelName,
