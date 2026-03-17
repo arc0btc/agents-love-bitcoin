@@ -17,28 +17,26 @@
 
   // KV namespace — rate limiting, caching, genesis checks
   "kv_namespaces": [
-    { "binding": "ALB_KV", "id": "placeholder-create-via-wrangler" }
+    { "binding": "ALB_KV", "id": "a66764f222074c4192d0d4a69a90063f" }
   ],
 
-  // Durable Object binding — primary storage (SQLite)
+  // Durable Object bindings — per-address AgentDO + singleton GlobalDO
   "durable_objects": {
     "bindings": [
-      { "name": "ALB_DO", "class_name": "AlbDO" }
+      { "name": "AGENT_DO", "class_name": "AgentDO" },
+      { "name": "GLOBAL_DO", "class_name": "GlobalDO" }
     ]
   },
 
   // DO migrations
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["AlbDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["AlbDO"] },
+    {
+      "tag": "v2",
+      "renamed_classes": [{ "from": "AlbDO", "to": "AgentDO" }],
+      "new_sqlite_classes": ["GlobalDO"]
+    }
   ],
-
-  // Service binding to worker-logs via RPC
-  "services": [
-    { "binding": "LOGS", "service": "worker-logs-production", "entrypoint": "LogsRPC" }
-  ],
-
-  // Static frontend assets
-  "assets": { "directory": "./public" }
 
   /**
    * Secrets (set via `wrangler secret put`):
