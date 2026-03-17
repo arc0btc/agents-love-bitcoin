@@ -1,10 +1,20 @@
 import type { Context } from "hono";
 
+/** worker-logs RPC binding (service binding to arc0btc/worker-logs) */
+export interface LogsBinding {
+  log: (appId: string, entry: { level: string; message: string; context?: Record<string, unknown>; request_id?: string }) => Promise<unknown>;
+  info: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
+  warn: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
+  error: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
+  debug: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
+}
+
 /** Cloudflare Worker environment bindings */
 export interface Env {
   ALB_KV: KVNamespace;
   AGENT_DO: DurableObjectNamespace;
   GLOBAL_DO: DurableObjectNamespace;
+  LOGS?: LogsBinding;
   ADMIN_API_KEY?: string;
   /** x402 relay URL (defaults to mainnet relay) */
   X402_RELAY_URL?: string;

@@ -15,6 +15,11 @@
     "ENVIRONMENT": "production"
   },
 
+  // Worker-logs RPC binding — structured logging via arc0btc/worker-logs
+  "services": [
+    { "binding": "LOGS", "service": "worker-logs", "entrypoint": "LogsRPC" }
+  ],
+
   // KV namespace — rate limiting, caching, genesis checks
   "kv_namespaces": [
     { "binding": "ALB_KV", "id": "a66764f222074c4192d0d4a69a90063f" }
