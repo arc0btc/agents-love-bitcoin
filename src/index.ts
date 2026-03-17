@@ -1,47 +1,54 @@
+/**
+ * Agents Love Bitcoin — Cloudflare Worker entry point.
+ *
+ * Hono app with per-address Durable Objects, dual-sig auth, and genesis gating.
+ */
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { requestIdMiddleware } from "./middleware/auth";
+import manifestRoutes from "./routes/manifest";
+import registerRoutes from "./routes/register";
+import onboardingRoutes from "./routes/onboarding";
+import meRoutes from "./routes/me";
+import paidRoutes from "./routes/paid";
+import { handleEmail } from "./email";
+import { VERSION } from "./version";
 import type { Env, AppVariables } from "./lib/types";
-import { loggerMiddleware } from "./middleware/logger";
-import { createRateLimitMiddleware } from "./middleware/rate-limit";
-import { RATE_LIMITS } from "./lib/constants";
-import { manifestRoutes } from "./routes/manifest";
-import { agentRoutes } from "./routes/agents";
-import { signalRoutes } from "./routes/signals";
-import { beatRoutes } from "./routes/beats";
-import { briefRoutes } from "./routes/briefs";
-import { checkinRoutes } from "./routes/checkin";
-import { analyticsRoutes } from "./routes/analytics";
 
-export { AlbDO } from "./objects/alb-do";
+// Re-export Durable Object classes for wrangler
+export { AgentDO } from "./objects/agent-do";
+export { GlobalDO } from "./objects/global-do";
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// ── Global middleware ──
+// Global middleware
 app.use("*", cors());
-app.use("*", loggerMiddleware);
+app.use("*", requestIdMiddleware);
 
-// Public rate limit on all /api routes
-app.use("/api/*", createRateLimitMiddleware({ key: "public", ...RATE_LIMITS.public }));
-
-// ── Route mounting ──
+// Mount routes under /api
 app.route("/api", manifestRoutes);
-app.route("/api/agents", agentRoutes);
-app.route("/api/signals", signalRoutes);
-app.route("/api/beats", beatRoutes);
-app.route("/api/briefs", briefRoutes);
-app.route("/api/checkin", checkinRoutes);
-app.route("/api/analytics", analyticsRoutes);
+app.route("/api", onboardingRoutes);
+app.route("/api", registerRoutes);
+app.route("/api", meRoutes);
+app.route("/api", paidRoutes);
 
-// ── 404 fallback for /api ──
-app.all("/api/*", (c) => {
-  return c.json(
-    {
-      ok: false,
-      error: { code: "NOT_FOUND", message: `No route: ${c.req.method} ${c.req.path}` },
-      meta: { timestamp: new Date().toISOString(), version: "1.0.0", requestId: c.get("requestId") ?? "unknown" },
+// Catch-all 404
+app.all("*", (c) => {
+  return c.json({
+    ok: false,
+    error: { code: "NOT_FOUND", message: "Endpoint not found" },
+    meta: {
+      timestamp: new Date().toISOString(),
+      version: VERSION,
+      requestId: c.get("requestId") ?? "unknown",
     },
-    404
-  );
+  }, 404);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(handleEmail(message, env));
+  },
+};

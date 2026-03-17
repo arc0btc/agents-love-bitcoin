@@ -1,24 +1,28 @@
 {
   "name": "agents-love-bitcoin",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "npx wrangler dev",
-    "deploy": "npx wrangler deploy",
-    "deploy:dry-run": "npx wrangler deploy --dry-run",
-    "typecheck": "tsc --noEmit",
-    "cf-typegen": "npx wrangler types"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241205.0",
-    "typescript": "^5.9.3",
-    "wrangler": "^4.0.0"
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "deploy:dry": "wrangler deploy --dry-run"
   },
   "dependencies": {
-    "@noble/curves": "^2.0.1",
-    "@noble/hashes": "^2.0.1",
-    "@scure/base": "^2.0.0",
-    "@scure/btc-signer": "^2.0.1",
-    "hono": "^4.6.0"
+    "aibtc-genesis-gate": "github:arc0btc/aibtc-genesis-gate",
+    "hono": "^4.6.0",
+    "@noble/curves": "^1.8.0",
+    "@noble/hashes": "^1.7.0",
+    "@scure/base": "^1.2.0",
+    "@scure/btc-signer": "^1.5.0",
+    "@stacks/transactions": "^7.0.0",
+    "@stacks/encryption": "^7.0.0",
+    "@stacks/common": "^7.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^3.100.0"
   }
 }

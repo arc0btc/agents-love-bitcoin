@@ -1,112 +1,131 @@
-import type { Context, Next } from "hono";
+/**
+ * Authentication middleware for ALB.
+ *
+ * - Standard API auth: BIP-137/322 signature verification (BTC only).
+ * - Registration auth: Dual-sig (BIP-137/322 + SIP-018) for POST /api/register.
+ *
+ * Sets c.set("btcAddress") and c.set("stxAddress") on context.
+ */
+
+import type { MiddlewareHandler } from "hono";
+import { verifyBtcSignature } from "../services/btc-verify";
+import { verifySip018Registration } from "../services/stx-verify";
+import { TIMESTAMP_WINDOW_S } from "../lib/constants";
+import { errorResponse, isP2WPKH, isStacksMainnet, generateRequestId } from "../lib/helpers";
 import type { Env, AppVariables } from "../lib/types";
-import { extractAuthHeaders, verifyTimestamp, verifyBIP322Simple } from "../services/auth";
-import { CACHE_TTL } from "../lib/constants";
-import { err } from "../lib/helpers";
+
+type ALBMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }>;
 
 /**
- * BIP-137/322 auth middleware.
- * Extracts and verifies signature headers. Sets `btcAddress` in context on success.
+ * Middleware that injects a request ID into the context.
  */
-export function requireAuth() {
-  return async function authMiddleware(
-    c: Context<{ Bindings: Env; Variables: AppVariables }>,
-    next: Next
-  ): Promise<void | Response> {
-    const authHeaders = extractAuthHeaders(c.req.raw.headers);
-    if (!authHeaders) {
-      return c.json(
-        err("UNAUTHORIZED", "Missing authentication headers: X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp", c.get("requestId")),
-        401
-      );
-    }
-
-    if (!verifyTimestamp(authHeaders.timestamp)) {
-      return c.json(
-        err("UNAUTHORIZED", "Timestamp is outside the allowed window (±5 minutes)", c.get("requestId")),
-        401
-      );
-    }
-
-    const message = `${c.req.method} ${new URL(c.req.url).pathname}:${authHeaders.timestamp}`;
-    if (!verifyBIP322Simple(authHeaders.address, message, authHeaders.signature)) {
-      return c.json(
-        err("UNAUTHORIZED", 'Invalid signature. Sign: "METHOD /path:timestamp" using BIP-137 or BIP-322.', c.get("requestId")),
-        401
-      );
-    }
-
-    c.set("btcAddress", authHeaders.address);
-    return next();
-  };
-}
+export const requestIdMiddleware: ALBMiddleware = async (c, next) => {
+  c.set("requestId", generateRequestId());
+  await next();
+};
 
 /**
- * Genesis-level check middleware. Must be used after requireAuth().
- * Checks KV cache first, then fetches from aibtc.com.
+ * Standard BIP-137/322 auth middleware for authenticated endpoints.
+ * Verifies: X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp headers.
+ * Message format: "{METHOD} {path}:{timestamp}"
  */
-export function requireGenesis() {
-  return async function genesisMiddleware(
-    c: Context<{ Bindings: Env; Variables: AppVariables }>,
-    next: Next
-  ): Promise<void | Response> {
-    const address = c.get("btcAddress");
-    if (!address) {
-      return c.json(err("UNAUTHORIZED", "Authentication required", c.get("requestId")), 401);
-    }
+export const btcAuthMiddleware: ALBMiddleware = async (c, next) => {
+  const btcAddress = c.req.header("X-BTC-Address");
+  const btcSignature = c.req.header("X-BTC-Signature");
+  const btcTimestamp = c.req.header("X-BTC-Timestamp");
 
-    const cacheKey = `genesis:${address}`;
-    const cached = await c.env.ALB_KV.get<{ level: number }>(cacheKey, "json");
+  if (!btcAddress || !btcSignature || !btcTimestamp) {
+    return errorResponse(c, "UNAUTHORIZED", "Missing required auth headers: X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp", 401);
+  }
 
-    if (cached) {
-      if (cached.level >= 2) {
-        c.set("isGenesis", true);
-        return next();
-      }
-      return c.json(err("FORBIDDEN", "Genesis agent status required (level >= 2)", c.get("requestId")), 403);
-    }
+  // Validate address format
+  if (!isP2WPKH(btcAddress)) {
+    return errorResponse(c, "VALIDATION_ERROR", "Only P2WPKH (bc1q) addresses supported. Taproot (bc1p) is not yet supported.", 400);
+  }
 
-    // Cache miss — check aibtc.com
-    try {
-      const res = await fetch(`https://aibtc.com/api/agents/${encodeURIComponent(address)}`, {
-        headers: { Accept: "application/json" },
-      });
+  // Validate timestamp window
+  const ts = parseInt(btcTimestamp, 10);
+  if (isNaN(ts)) {
+    return errorResponse(c, "UNAUTHORIZED", "Invalid timestamp format", 401);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > TIMESTAMP_WINDOW_S) {
+    return errorResponse(c, "UNAUTHORIZED", "Timestamp expired (\u00b1300s window)", 401);
+  }
 
-      if (res.ok) {
-        const data = (await res.json()) as Record<string, unknown>;
-        const agent = data?.agent as Record<string, unknown> | undefined;
-        const level = typeof agent?.level === "number" ? agent.level : 0;
+  // Verify BTC signature
+  const message = `${c.req.method} ${new URL(c.req.url).pathname}:${btcTimestamp}`;
+  const result = verifyBtcSignature(btcAddress, btcSignature, message);
+  if (!result.valid) {
+    return errorResponse(c, "UNAUTHORIZED", "Invalid BTC signature", 401);
+  }
 
-        await c.env.ALB_KV.put(cacheKey, JSON.stringify({ level }), {
-          expirationTtl: CACHE_TTL.genesisCheck,
-        });
-
-        if (level >= 2) {
-          c.set("isGenesis", true);
-          return next();
-        }
-        return c.json(err("FORBIDDEN", "Genesis agent status required (level >= 2)", c.get("requestId")), 403);
-      }
-    } catch {
-      // Network error — deny by default
-    }
-
-    return c.json(err("FORBIDDEN", "Unable to verify Genesis status", c.get("requestId")), 403);
-  };
-}
+  c.set("btcAddress", btcAddress);
+  await next();
+};
 
 /**
- * Admin auth middleware. Checks X-Admin-Key header against ADMIN_API_KEY secret.
+ * Dual-sig auth middleware for POST /api/register.
+ * Verifies both BIP-137/322 (BTC) and SIP-018 (STX) signatures.
+ * Message format for BTC: "REGISTER {btc}:{stx}:{timestamp}"
+ * SIP-018 domain: agentslovebitcoin.com
  */
-export function requireAdmin() {
-  return async function adminMiddleware(
-    c: Context<{ Bindings: Env; Variables: AppVariables }>,
-    next: Next
-  ): Promise<void | Response> {
-    const key = c.req.header("X-Admin-Key");
-    if (!key || !c.env.ADMIN_API_KEY || key !== c.env.ADMIN_API_KEY) {
-      return c.json(err("UNAUTHORIZED", "Invalid or missing admin key", c.get("requestId")), 401);
-    }
-    return next();
-  };
-}
+export const dualSigAuthMiddleware: ALBMiddleware = async (c, next) => {
+  const btcAddress = c.req.header("X-BTC-Address");
+  const btcSignature = c.req.header("X-BTC-Signature");
+  const btcTimestamp = c.req.header("X-BTC-Timestamp");
+  const stxAddress = c.req.header("X-STX-Address");
+  const stxSignature = c.req.header("X-STX-Signature");
+
+  // Check all required headers
+  if (!btcAddress || !btcSignature || !btcTimestamp || !stxAddress || !stxSignature) {
+    return errorResponse(
+      c,
+      "UNAUTHORIZED",
+      "Missing required auth headers: X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp, X-STX-Address, X-STX-Signature",
+      401
+    );
+  }
+
+  // Validate BTC address format (P2WPKH only)
+  if (!isP2WPKH(btcAddress)) {
+    return errorResponse(c, "VALIDATION_ERROR", "Only P2WPKH (bc1q) addresses supported. Taproot (bc1p) is not yet supported.", 400);
+  }
+
+  // Validate STX address format (mainnet only)
+  if (!isStacksMainnet(stxAddress)) {
+    return errorResponse(c, "VALIDATION_ERROR", "Only Stacks mainnet (SP) addresses supported.", 400);
+  }
+
+  // Validate timestamp window
+  const ts = parseInt(btcTimestamp, 10);
+  if (isNaN(ts)) {
+    return errorResponse(c, "UNAUTHORIZED", "Invalid timestamp format", 401);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > TIMESTAMP_WINDOW_S) {
+    return errorResponse(c, "UNAUTHORIZED", "Timestamp expired (\u00b1300s window)", 401);
+  }
+
+  // Verify BTC signature (registration message format)
+  const btcMessage = `REGISTER ${btcAddress}:${stxAddress}:${btcTimestamp}`;
+  const btcResult = verifyBtcSignature(btcAddress, btcSignature, btcMessage);
+  if (!btcResult.valid) {
+    return errorResponse(c, "UNAUTHORIZED", "Invalid BTC signature", 401);
+  }
+
+  // Verify STX signature (SIP-018 structured data)
+  const stxResult = verifySip018Registration({
+    signature: stxSignature,
+    btcAddress,
+    stxAddress,
+    timestamp: ts,
+  });
+  if (!stxResult.valid) {
+    return errorResponse(c, "UNAUTHORIZED", "Invalid STX signature", 401);
+  }
+
+  c.set("btcAddress", btcAddress);
+  c.set("stxAddress", stxAddress);
+  await next();
+};
