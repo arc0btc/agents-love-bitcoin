@@ -46,6 +46,26 @@ app.all("*", (c) => {
   }, 404);
 });
 
+// Global error handler — catches unhandled exceptions from route handlers
+app.onError((err, c) => {
+  const message = err instanceof Error ? err.message : String(err);
+  const isDOError = message.includes("idFromName") || message.includes("storage.sql") || message.includes("Cannot read propert");
+  return c.json({
+    ok: false,
+    error: {
+      code: isDOError ? "SERVICE_UNAVAILABLE" : "INTERNAL_ERROR",
+      message: isDOError
+        ? "Infrastructure not ready. Durable Object bindings unavailable — redeploy required."
+        : "An unexpected error occurred.",
+    },
+    meta: {
+      timestamp: new Date().toISOString(),
+      version: VERSION,
+      requestId: c.get("requestId") ?? "unknown",
+    },
+  }, 500);
+});
+
 export default {
   fetch: app.fetch,
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {

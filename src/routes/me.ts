@@ -26,6 +26,9 @@ me.get("/me/profile", async (c) => {
   const regResp = await globalDo.fetch(
     new Request(`http://internal/is-registered/${btcAddress}`)
   );
+  if (!regResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
+  }
   const { registered } = await regResp.json() as { registered: boolean };
 
   if (!registered) {
@@ -41,6 +44,9 @@ me.get("/me/profile", async (c) => {
   const agentDo = c.env.AGENT_DO.get(agentDoId);
 
   const profileResp = await agentDo.fetch(new Request("http://internal/profile"));
+  if (!profileResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch profile", 500);
+  }
   const { profile } = await profileResp.json() as { profile: Record<string, unknown> | null };
 
   if (!profile) {
@@ -59,6 +65,9 @@ me.get("/me/email", async (c) => {
   const regResp = await globalDo.fetch(
     new Request(`http://internal/is-registered/${btcAddress}`)
   );
+  if (!regResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
+  }
   const { registered } = await regResp.json() as { registered: boolean };
 
   if (!registered) {
@@ -74,6 +83,9 @@ me.get("/me/email", async (c) => {
   const agentDo = c.env.AGENT_DO.get(agentDoId);
 
   const emailResp = await agentDo.fetch(new Request("http://internal/email"));
+  if (!emailResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch email details", 500);
+  }
   const { email } = await emailResp.json() as { email: Record<string, unknown> | null };
 
   if (!email) {
@@ -96,6 +108,9 @@ me.get("/me/email/inbox", async (c) => {
   const inboxResp = await agentDo.fetch(
     new Request(`http://internal/inbox?limit=${Math.min(Math.max(limit, 1), 100)}&offset=${Math.max(offset, 0)}`)
   );
+  if (!inboxResp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch inbox", 500);
+  }
   const { messages, total } = await inboxResp.json() as {
     messages: Array<Record<string, unknown>>;
     total: number;
