@@ -61,32 +61,32 @@ export class GlobalDO extends DurableObject<Env> {
   /** Check if a BTC address is already registered. */
   async isRegistered(btcAddress: string): Promise<boolean> {
     this.ensureSchema();
-    const row = this.ctx.storage.sql.exec(
+    const rows = this.ctx.storage.sql.exec(
       `SELECT 1 FROM agent_index WHERE btc_address = ?`,
       btcAddress
-    ).one();
-    return row !== null;
+    ).toArray();
+    return rows.length > 0;
   }
 
   /** Check if an AIBTC name is already taken by another address. */
   async isNameTaken(aibtcName: string, excludeBtcAddress: string): Promise<boolean> {
     this.ensureSchema();
-    const row = this.ctx.storage.sql.exec(
+    const rows = this.ctx.storage.sql.exec(
       `SELECT 1 FROM address_resolution WHERE aibtc_name = ? AND btc_address != ?`,
       aibtcName,
       excludeBtcAddress
-    ).one();
-    return row !== null;
+    ).toArray();
+    return rows.length > 0;
   }
 
   /** Resolve an AIBTC name to a BTC address (for email routing). */
   async resolveByName(aibtcName: string): Promise<{ btcAddress: string } | null> {
     this.ensureSchema();
-    const row = this.ctx.storage.sql.exec(
+    const rows = this.ctx.storage.sql.exec(
       `SELECT btc_address FROM address_resolution WHERE aibtc_name = ?`,
       aibtcName
-    ).one() as { btc_address: string } | null;
-    return row ? { btcAddress: row.btc_address } : null;
+    ).toArray() as { btc_address: string }[];
+    return rows.length > 0 ? { btcAddress: rows[0].btc_address } : null;
   }
 
   /** HTTP handler for internal DO requests. */

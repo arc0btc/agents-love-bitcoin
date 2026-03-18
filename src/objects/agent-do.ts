@@ -109,15 +109,15 @@ export class AgentDO extends DurableObject<Env> {
   /** Get the agent profile. Returns null if not registered. */
   async getProfile(): Promise<ProfileRow | null> {
     this.ensureSchema();
-    const row = this.ctx.storage.sql.exec(`SELECT * FROM profile LIMIT 1`).one();
-    return (row as unknown as ProfileRow) ?? null;
+    const rows = this.ctx.storage.sql.exec(`SELECT * FROM profile LIMIT 1`).toArray();
+    return rows.length > 0 ? (rows[0] as unknown as ProfileRow) : null;
   }
 
   /** Get the agent email. Returns null if not provisioned. */
   async getEmail(): Promise<EmailRow | null> {
     this.ensureSchema();
-    const row = this.ctx.storage.sql.exec(`SELECT * FROM email LIMIT 1`).one();
-    return (row as unknown as EmailRow) ?? null;
+    const rows = this.ctx.storage.sql.exec(`SELECT * FROM email LIMIT 1`).toArray();
+    return rows.length > 0 ? (rows[0] as unknown as EmailRow) : null;
   }
 
   /** Get account stats (lifetime totals). */
@@ -190,10 +190,11 @@ export class AgentDO extends DurableObject<Env> {
   async getInboxMessage(messageId: string): Promise<InboxRow | null> {
     this.ensureSchema();
 
-    const row = this.ctx.storage.sql.exec(
+    const rows = this.ctx.storage.sql.exec(
       `SELECT * FROM inbox WHERE id = ?`,
       messageId
-    ).one() as unknown as InboxRow | null;
+    ).toArray() as unknown as InboxRow[];
+    const row = rows.length > 0 ? rows[0] : null;
 
     if (row && !row.read_at) {
       const now = new Date().toISOString();
