@@ -33,8 +33,15 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
     return errorResponse(c, "UNAUTHORIZED", "Authentication required for metered endpoints", 401);
   }
 
-  // If request was paid via x402, skip metering (don't check allocation, don't count)
+  // If request was paid via x402 or authenticated via admin key, skip metering
   if (c.get("x402Payer")) {
+    await next();
+    return;
+  }
+
+  // Admin API key bypass — platform operator skips metering entirely
+  const adminKey = c.req.header("X-Admin-Key");
+  if (adminKey && c.env.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY) {
     await next();
     return;
   }
