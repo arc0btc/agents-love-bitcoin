@@ -33,6 +33,12 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
     return errorResponse(c, "UNAUTHORIZED", "Authentication required for metered endpoints", 401);
   }
 
+  // If request was paid via x402, skip metering (don't check allocation, don't count)
+  if (c.get("x402Payer")) {
+    await next();
+    return;
+  }
+
   const kvKey = `meter:${btcAddress}`;
   let meter = await c.env.ALB_KV.get<MeterState>(kvKey, "json");
 
