@@ -155,6 +155,13 @@ export function x402MeterOverflow(config: X402GateConfig): ALBMiddleware {
       return errorResponse(c, "UNAUTHORIZED", "Authentication required", 401);
     }
 
+    // Admin API key bypass — platform operator skips metering entirely
+    const adminKey = c.req.header("X-Admin-Key");
+    if (adminKey && c.env.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY) {
+      await next();
+      return;
+    }
+
     // Check if agent has free allocation remaining
     const kvKey = `meter:${btcAddress}`;
     const meter = await c.env.ALB_KV.get<{
