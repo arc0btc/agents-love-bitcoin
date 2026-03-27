@@ -6,15 +6,19 @@
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
+import { x402MeterOverflow } from "../middleware/x402";
 import { meteringMiddleware, getMeterState } from "../middleware/metering";
 import { okResponse, errorResponse } from "../lib/helpers";
-import { FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
+import { FREE_ALLOCATION, PAID_RATE, RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables } from "../lib/types";
 
 const me = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// Auth + metering for all /me routes
-me.use("/me/*", btcAuthMiddleware, meteringMiddleware);
+// Auth + x402 overflow (accepts payment when free allocation exhausted) + metering
+me.use("/me/*", btcAuthMiddleware, x402MeterOverflow({
+  priceSats: PAID_RATE.perRequest,
+  description: "API request beyond free allocation",
+}), meteringMiddleware);
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {
