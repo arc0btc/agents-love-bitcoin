@@ -16,6 +16,7 @@
  */
 
 import { Hono } from "hono";
+import type { AibtcAgent } from "aibtc-genesis-gate";
 import { resolveGenesisAgent } from "../services/agent-resolver";
 import { resolveAgentName, toEmailSlug } from "../services/name-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
@@ -30,41 +31,60 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   const btcAddress = c.get("btcAddress")!;
   const stxAddress = c.get("stxAddress")!;
 
-  // ── Step 5: Check genesis status ──────────────────────────────────────
-  const resolved = await resolveGenesisAgent(btcAddress, c.env);
-  if (!resolved.ok) {
-    const statusMap: Record<string, 403 | 502> = {
-      NOT_FOUND: 403,
-      NOT_GENESIS: 403,
-      UPSTREAM_ERROR: 502,
-    };
-    const status = statusMap[resolved.code] ?? 400;
+  // ── Step 5: Check genesis status (admin key bypasses the gate) ────────
+  const adminKey = c.req.header("X-Admin-Key");
+  const isAdmin = Boolean(adminKey && c.env.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY);
 
-    // Include onboarding guidance for non-genesis agents
-    if (resolved.code === "NOT_GENESIS" || resolved.code === "NOT_FOUND") {
-      return c.json({
-        ok: false,
-        error: { code: "FORBIDDEN", message: resolved.error },
-        data: {
-          current_level: resolved.level ?? 0,
-          required_level: 2,
-          onboarding_url: "https://agentslovebitcoin.com/api/onboarding",
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-          version: VERSION,
-          requestId: c.get("requestId"),
-        },
-      }, status);
+  let agent: AibtcAgent;
+  if (isAdmin) {
+    agent = {
+      btcAddress,
+      stxAddress,
+      aibtcName: null,
+      bnsName: null,
+      level: 2,
+      levelName: "genesis",
+      erc8004AgentId: null,
+      checkInCount: 0,
+      lastActiveAt: null,
+      verifiedAt: null,
+    };
+  } else {
+    const resolved = await resolveGenesisAgent(btcAddress, c.env);
+    if (!resolved.ok) {
+      const statusMap: Record<string, 403 | 502> = {
+        NOT_FOUND: 403,
+        NOT_GENESIS: 403,
+        UPSTREAM_ERROR: 502,
+      };
+      const status = statusMap[resolved.code] ?? 400;
+
+      // Include onboarding guidance for non-genesis agents
+      if (resolved.code === "NOT_GENESIS" || resolved.code === "NOT_FOUND") {
+        return c.json({
+          ok: false,
+          error: { code: "FORBIDDEN", message: resolved.error },
+          data: {
+            current_level: resolved.level ?? 0,
+            required_level: 2,
+            onboarding_url: "https://agentslovebitcoin.com/api/onboarding",
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            version: VERSION,
+            requestId: c.get("requestId"),
+          },
+        }, status);
+      }
+
+      const codeMap: Record<string, string> = {
+        UPSTREAM_ERROR: "UPSTREAM_ERROR",
+      };
+      return errorResponse(c, codeMap[resolved.code] ?? resolved.code, resolved.error, status);
     }
 
-    const codeMap: Record<string, string> = {
-      UPSTREAM_ERROR: "UPSTREAM_ERROR",
-    };
-    return errorResponse(c, codeMap[resolved.code] ?? resolved.code, resolved.error, status);
+    agent = resolved.agent;
   }
-
-  const agent = resolved.agent;
 
   // ── Step 6: Resolve deterministic agent name ─────────────────────────
   const nameResult = await resolveAgentName(btcAddress);
