@@ -5,6 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { GLOBAL_DO_SCHEMA } from "./schema";
 import type { Env } from "../lib/types";
+import { emailLocalToEmail } from "../lib/names";
 
 export class GlobalDO extends DurableObject<Env> {
   private initialized = false;
@@ -68,23 +69,35 @@ export class GlobalDO extends DurableObject<Env> {
     return rows.length > 0;
   }
 
-  /** Check if an AIBTC name is already taken by another address. */
-  async isNameTaken(aibtcName: string, excludeBtcAddress: string): Promise<boolean> {
+  /**
+   * Check if an email local part is already provisioned to another address.
+   * `localPart` is the slug form (e.g. `steel-yeti`), not the display name.
+   */
+  async isEmailLocalPartTaken(
+    localPart: string,
+    excludeBtcAddress: string
+  ): Promise<boolean> {
     this.ensureSchema();
     const rows = this.ctx.storage.sql.exec(
-      `SELECT 1 FROM address_resolution WHERE aibtc_name = ? AND btc_address != ?`,
-      aibtcName,
+      `SELECT 1 FROM address_resolution WHERE email_address = ? AND btc_address != ?`,
+      emailLocalToEmail(localPart),
       excludeBtcAddress
     ).toArray();
     return rows.length > 0;
   }
 
-  /** Resolve an AIBTC name to a BTC address (for email routing). */
-  async resolveByName(aibtcName: string): Promise<{ btcAddress: string } | null> {
+  /**
+   * Resolve an inbound email's local part to a BTC address (for routing).
+   * `localPart` is the lowercased slug form delivered by Cloudflare Email
+   * Routing (e.g. `steel-yeti`), not the display name (e.g. `Steel Yeti`).
+   */
+  async resolveByEmailLocalPart(
+    localPart: string
+  ): Promise<{ btcAddress: string } | null> {
     this.ensureSchema();
     const rows = this.ctx.storage.sql.exec(
-      `SELECT btc_address FROM address_resolution WHERE aibtc_name = ?`,
-      aibtcName
+      `SELECT btc_address FROM address_resolution WHERE email_address = ?`,
+      emailLocalToEmail(localPart)
     ).toArray() as { btc_address: string }[];
     return rows.length > 0 ? { btcAddress: rows[0].btc_address } : null;
   }
@@ -105,16 +118,16 @@ export class GlobalDO extends DurableObject<Env> {
       return Response.json({ registered });
     }
 
-    if (url.pathname.startsWith("/is-name-taken") && request.method === "GET") {
-      const name = url.searchParams.get("name") ?? "";
+    if (url.pathname.startsWith("/is-email-local-taken") && request.method === "GET") {
+      const local = url.searchParams.get("local") ?? "";
       const exclude = url.searchParams.get("exclude") ?? "";
-      const taken = await this.isNameTaken(name, exclude);
+      const taken = await this.isEmailLocalPartTaken(local, exclude);
       return Response.json({ taken });
     }
 
-    if (url.pathname.startsWith("/resolve-name/") && request.method === "GET") {
-      const name = url.pathname.split("/resolve-name/")[1];
-      const result = await this.resolveByName(name);
+    if (url.pathname.startsWith("/resolve-email-local/") && request.method === "GET") {
+      const local = url.pathname.split("/resolve-email-local/")[1];
+      const result = await this.resolveByEmailLocalPart(local);
       if (!result) return new Response("Not Found", { status: 404 });
       return Response.json(result);
     }
