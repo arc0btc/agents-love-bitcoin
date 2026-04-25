@@ -18,10 +18,11 @@
 import { Hono } from "hono";
 import type { AibtcAgent } from "aibtc-genesis-gate";
 import { resolveGenesisAgent } from "../services/agent-resolver";
-import { resolveAgentName, toEmailSlug } from "../services/name-resolver";
+import { resolveAgentName } from "../services/name-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
 import { okResponse, errorResponse } from "../lib/helpers";
-import { EMAIL_DOMAIN, FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
+import { aibtcNameToEmailLocal, aibtcNameToEmail } from "../lib/names";
+import { FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
 import { VERSION } from "../version";
 import type { Env, AppVariables, RegistrationData } from "../lib/types";
 
@@ -92,8 +93,8 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     return errorResponse(c, "NAME_RESOLUTION_ERROR", nameResult.error, 502);
   }
   const agentName = nameResult.name;
-  const emailSlug = toEmailSlug(agentName);
-  const emailAddress = `${emailSlug}@${EMAIL_DOMAIN}`;
+  const emailLocal = aibtcNameToEmailLocal(agentName);
+  const emailAddress = aibtcNameToEmail(agentName);
 
   // ── Step 7: Check existing registration (idempotent) ──────────────────
   const globalDoId = c.env.GLOBAL_DO.idFromName("global");
@@ -147,9 +148,9 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     return okResponse(c, data, 200);
   }
 
-  // ── Step 8: Check name uniqueness ────────────────────────────────────
+  // ── Step 8: Check email uniqueness ────────────────────────────────────
   const nameCheckResp = await globalDo.fetch(
-    new Request(`http://internal/is-name-taken?name=${encodeURIComponent(emailSlug)}&exclude=${encodeURIComponent(btcAddress)}`)
+    new Request(`http://internal/is-email-local-taken?local=${encodeURIComponent(emailLocal)}&exclude=${encodeURIComponent(btcAddress)}`)
   );
   if (!nameCheckResp.ok) {
     return errorResponse(c, "INTERNAL_ERROR", "Failed to check name uniqueness", 500);

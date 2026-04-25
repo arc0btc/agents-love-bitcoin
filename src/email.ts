@@ -77,12 +77,12 @@ export async function handleEmail(
     return;
   }
 
-  // Resolve AIBTC name → BTC address via GlobalDO
+  // Resolve email local part → BTC address via GlobalDO
   const globalDoId = env.GLOBAL_DO.idFromName("global");
   const globalDo = env.GLOBAL_DO.get(globalDoId);
 
   const resolveResp = await globalDo.fetch(
-    new Request(`http://internal/resolve-name/${encodeURIComponent(localPart)}`)
+    new Request(`http://internal/resolve-email-local/${encodeURIComponent(localPart)}`)
   );
 
   if (!resolveResp.ok) {
