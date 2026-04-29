@@ -6,9 +6,12 @@
 import { Hono } from "hono";
 import { VERSION } from "../version";
 import { okResponse } from "../lib/helpers";
+import { publicRateMiddleware } from "../middleware/metering";
 import type { Env, AppVariables } from "../lib/types";
 
 const manifest = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+manifest.use("*", publicRateMiddleware);
 
 manifest.get("/", (c) => {
   return okResponse(c, {

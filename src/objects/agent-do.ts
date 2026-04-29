@@ -5,7 +5,25 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { AGENT_DO_SCHEMA } from "./schema";
-import type { Env } from "../lib/types";
+import { RATE_LIMITS } from "../lib/constants";
+import { RATE_WINDOW_MS } from "../lib/constants";
+import type { Env, Tier } from "../lib/types";
+
+interface RateStateRow {
+  window_started_at_ms: number;
+  requests_in_window: number;
+  credit_balance: number;
+}
+
+export interface RateCheckResult {
+  allowed: boolean;
+  tier: Tier;
+  ratePerMinute: number;
+  requestsInWindow: number;
+  resetAt: number;          // ms epoch of window end
+  creditBalance: number;
+  paid: boolean;             // true when the request was funded by a credit instead of free quota
+}
 
 interface ProfileRow {
   btc_address: string;
@@ -220,6 +238,118 @@ export class AgentDO extends DurableObject<Env> {
     return this.getEmail();
   }
 
+  /**
+   * Resolve this agent's tier from its profile level.
+   * Unregistered agents fall back to "registered" so the rate gate still applies a default cap.
+   */
+  private resolveTier(): Tier {
+    this.ensureSchema();
+    const rows = this.ctx.storage.sql
+      .exec(`SELECT level FROM profile LIMIT 1`)
+      .toArray() as unknown as Array<{ level: number }>;
+    if (rows.length === 0) return "registered";
+    return rows[0].level >= 2 ? "genesis" : "registered";
+  }
+
+  /** Read the rate-state row, initializing it if missing or after a window roll. */
+  private loadRateRow(now: number): RateStateRow {
+    this.ensureSchema();
+    const existing = this.ctx.storage.sql
+      .exec(`SELECT window_started_at_ms, requests_in_window, credit_balance FROM rate_state WHERE id = 1`)
+      .toArray() as unknown as RateStateRow[];
+
+    if (existing.length === 0) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO rate_state (id, window_started_at_ms, requests_in_window, credit_balance) VALUES (1, ?, 0, 0)`,
+        now
+      );
+      return { window_started_at_ms: now, requests_in_window: 0, credit_balance: 0 };
+    }
+
+    const row = existing[0];
+    if (now - row.window_started_at_ms >= RATE_WINDOW_MS) {
+      this.ctx.storage.sql.exec(
+        `UPDATE rate_state SET window_started_at_ms = ?, requests_in_window = 0 WHERE id = 1`,
+        now
+      );
+      return { window_started_at_ms: now, requests_in_window: 0, credit_balance: row.credit_balance };
+    }
+    return row;
+  }
+
+  /**
+   * Per-minute rate gate.
+   *
+   * - If under the per-tier ceiling: increment the window counter, allow.
+   * - If at the ceiling but a credit is available: decrement the credit balance, allow,
+   *   and DO NOT increment the window counter — paid requests bypass the cap entirely.
+   * - Otherwise: deny.
+   */
+  async checkAndIncrementRate(): Promise<RateCheckResult> {
+    this.ensureSchema();
+    const now = Date.now();
+    const tier = this.resolveTier();
+    const ratePerMinute = RATE_LIMITS[tier];
+    const row = this.loadRateRow(now);
+    const resetAt = row.window_started_at_ms + RATE_WINDOW_MS;
+
+    if (row.requests_in_window < ratePerMinute) {
+      this.ctx.storage.sql.exec(
+        `UPDATE rate_state SET requests_in_window = requests_in_window + 1 WHERE id = 1`
+      );
+      return {
+        allowed: true,
+        tier,
+        ratePerMinute,
+        requestsInWindow: row.requests_in_window + 1,
+        resetAt,
+        creditBalance: row.credit_balance,
+        paid: false,
+      };
+    }
+
+    if (row.credit_balance > 0) {
+      this.ctx.storage.sql.exec(
+        `UPDATE rate_state SET credit_balance = credit_balance - 1 WHERE id = 1`
+      );
+      return {
+        allowed: true,
+        tier,
+        ratePerMinute,
+        requestsInWindow: row.requests_in_window,
+        resetAt,
+        creditBalance: row.credit_balance - 1,
+        paid: true,
+      };
+    }
+
+    return {
+      allowed: false,
+      tier,
+      ratePerMinute,
+      requestsInWindow: row.requests_in_window,
+      resetAt,
+      creditBalance: 0,
+      paid: false,
+    };
+  }
+
+  /** Read-only rate snapshot for /api/me/usage — no increment, no window roll. */
+  async getRateSnapshot(): Promise<Omit<RateCheckResult, "allowed" | "paid">> {
+    this.ensureSchema();
+    const now = Date.now();
+    const tier = this.resolveTier();
+    const ratePerMinute = RATE_LIMITS[tier];
+    const row = this.loadRateRow(now);
+    return {
+      tier,
+      ratePerMinute,
+      requestsInWindow: row.requests_in_window,
+      resetAt: row.window_started_at_ms + RATE_WINDOW_MS,
+      creditBalance: row.credit_balance,
+    };
+  }
+
   /** HTTP handler for internal DO requests. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -243,6 +373,16 @@ export class AgentDO extends DurableObject<Env> {
     if (url.pathname === "/stats" && request.method === "GET") {
       const stats = await this.getStats();
       return Response.json({ stats });
+    }
+
+    if (url.pathname === "/rate/check" && request.method === "POST") {
+      const result = await this.checkAndIncrementRate();
+      return Response.json(result);
+    }
+
+    if (url.pathname === "/rate/snapshot" && request.method === "GET") {
+      const snapshot = await this.getRateSnapshot();
+      return Response.json(snapshot);
     }
 
     if (url.pathname === "/email/forward" && request.method === "PUT") {

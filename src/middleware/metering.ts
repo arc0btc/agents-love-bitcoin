@@ -1,149 +1,178 @@
 /**
- * Metering middleware — tracks free allocation per agent via KV.
+ * Metering middleware — per-minute rate gate.
  *
- * Runs after btcAuthMiddleware. Checks rolling 24h window usage.
- * If free allocation exhausted, returns 402 Payment Required.
- * Sets X-Meter-* headers on every authenticated response.
+ * - `meteringMiddleware`: authenticated routes. Defers to AgentDO.checkAndIncrementRate
+ *   which derives the tier from the agent's level and atomically counts within a
+ *   60-second window. Paid requests (credit-funded, PR2) bypass the window cap entirely.
+ * - `publicRateMiddleware`: no-auth routes. Per-IP cap at RATE_LIMITS.public via KV.
+ *   Race-tolerant — KV has no atomic increment but a 30/min ceiling per IP is fine.
+ *
+ * Both surfaces emit X-Rate-Limit, X-Rate-Remaining, and X-Rate-Reset (seconds-until-reset).
+ * On 429 the body carries a forward-compat payment hint pointing at /api/me/topup
+ * (PR2 implementation).
  */
 
 import type { MiddlewareHandler } from "hono";
-import { FREE_ALLOCATION, PAID_RATE, X402_HEADERS, WINDOW_SECONDS } from "../lib/constants";
+import { RATE_LIMITS, RATE_WINDOW_MS } from "../lib/constants";
 import { errorResponse } from "../lib/helpers";
 import { VERSION } from "../version";
-import type { Env, AppVariables, MeterState } from "../lib/types";
-import { buildPaymentRequiredBody, getTreasuryAddress } from "../services/x402";
+import type { Env, AppVariables, RateState } from "../lib/types";
 
 type ALBMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }>;
 
-function isWindowExpired(windowStart: number): boolean {
-  return Math.floor(Date.now() / 1000) - windowStart >= WINDOW_SECONDS;
+interface RateCheckJson {
+  allowed: boolean;
+  tier: "registered" | "genesis";
+  ratePerMinute: number;
+  requestsInWindow: number;
+  resetAt: number;
+  creditBalance: number;
+  paid: boolean;
 }
 
-function newWindowStart(): number {
-  return Math.floor(Date.now() / 1000);
+function setRateHeaders(
+  c: Parameters<ALBMiddleware>[0],
+  ratePerMinute: number,
+  requestsInWindow: number,
+  resetAtMs: number
+): void {
+  const remaining = Math.max(0, ratePerMinute - requestsInWindow);
+  const resetSeconds = Math.max(0, Math.ceil((resetAtMs - Date.now()) / 1000));
+  c.header("X-Rate-Limit", String(ratePerMinute));
+  c.header("X-Rate-Remaining", String(remaining));
+  c.header("X-Rate-Reset", String(resetSeconds));
+}
+
+function rateLimited(
+  c: Parameters<ALBMiddleware>[0],
+  ratePerMinute: number,
+  resetAtMs: number,
+  message: string
+): Response {
+  setRateHeaders(c, ratePerMinute, ratePerMinute, resetAtMs);
+  return c.json(
+    {
+      ok: false,
+      error: { code: "RATE_LIMITED", message },
+      // Forward-compat payment hint. /api/me/topup lands in PR2; clients can design
+      // retry-after-payment logic against this contract today.
+      payment: {
+        amountSats: 100,
+        perCredits: 100,
+        endpoint: "/api/me/topup",
+      },
+      data: {
+        rate_per_minute: ratePerMinute,
+        resets_at: new Date(resetAtMs).toISOString(),
+      },
+      meta: {
+        timestamp: new Date().toISOString(),
+        version: VERSION,
+        requestId: c.get("requestId") ?? "unknown",
+      },
+    },
+    429
+  );
 }
 
 /**
- * Metering middleware for genesis-tier endpoints.
- * Must run after btcAuthMiddleware (requires btcAddress on context).
+ * Per-minute rate gate for authenticated routes. Must run after btcAuthMiddleware.
+ * Admin API key bypasses the gate entirely.
  */
 export const meteringMiddleware: ALBMiddleware = async (c, next) => {
   const btcAddress = c.get("btcAddress");
   if (!btcAddress) {
-    return errorResponse(c, "UNAUTHORIZED", "Authentication required for metered endpoints", 401);
+    return errorResponse(c, "UNAUTHORIZED", "Authentication required for rate-gated endpoints", 401);
   }
 
-  // If request was paid via x402 or authenticated via admin key, skip metering
-  if (c.get("x402Payer")) {
-    await next();
-    return;
-  }
-
-  // Admin API key bypass — platform operator skips metering entirely
   const adminKey = c.req.header("X-Admin-Key");
   if (adminKey && c.env.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY) {
     await next();
     return;
   }
 
-  const kvKey = `meter:${btcAddress}`;
-  let meter = await c.env.ALB_KV.get<MeterState>(kvKey, "json");
+  const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
+  const agentDo = c.env.AGENT_DO.get(agentDoId);
 
-  // Fresh window if missing or expired
-  if (!meter || isWindowExpired(meter.windowStart)) {
-    meter = {
-      windowStart: newWindowStart(),
-      requests: 0,
-      briefReads: 0,
-      signalSubmissions: 0,
-      emailsSent: 0,
-    };
+  const resp = await agentDo.fetch(
+    new Request("http://internal/rate/check", { method: "POST" })
+  );
+  if (!resp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Rate gate unavailable", 500);
   }
+  const result = await resp.json() as RateCheckJson;
 
-  // Check free allocation — return x402 V2 compliant 402 when exhausted
-  if (meter.requests >= FREE_ALLOCATION.maxRequests) {
-    const resetAt = meter.windowStart + WINDOW_SECONDS;
-    c.header("X-Meter-Limit", String(FREE_ALLOCATION.maxRequests));
-    c.header("X-Meter-Remaining", "0");
-    c.header("X-Meter-Reset", String(resetAt));
-
-    // Build x402 V2 payment requirements
-    const payTo = getTreasuryAddress(c.env);
-    const body = buildPaymentRequiredBody(
-      c.req.url,
-      "API request beyond free allocation. Pay sBTC to continue.",
-      payTo,
-      PAID_RATE.perRequest,
-      c.env
-    );
-    const paymentRequiredHeader = btoa(JSON.stringify(body));
-
-    return c.json(
-      {
-        ...body,
-        ok: false,
-        error: {
-          code: "PAYMENT_REQUIRED",
-          message: `Free allocation exhausted (${FREE_ALLOCATION.maxRequests} requests/24h). Pay ${PAID_RATE.perRequest} satoshis (sBTC) per request to continue, or wait for window reset.`,
-        },
-        data: {
-          remaining: 0,
-          resets_at: new Date(resetAt * 1000).toISOString(),
-          window: "24h_rolling",
-        },
-        meta: {
-          timestamp: new Date().toISOString(),
-          version: VERSION,
-          requestId: c.get("requestId") ?? "unknown",
-        },
-      },
-      402,
-      { [X402_HEADERS.PAYMENT_REQUIRED]: paymentRequiredHeader }
+  if (!result.allowed) {
+    return rateLimited(
+      c,
+      result.ratePerMinute,
+      result.resetAt,
+      `Rate limit exceeded (${result.ratePerMinute}/min, ${result.tier} tier). Top up sBTC credits via /api/me/topup or wait for window reset.`
     );
   }
 
-  // Increment request count
-  meter.requests += 1;
-  const remaining = FREE_ALLOCATION.maxRequests - meter.requests;
-  const resetAt = meter.windowStart + WINDOW_SECONDS;
+  setRateHeaders(c, result.ratePerMinute, result.requestsInWindow, result.resetAt);
+  await next();
+};
 
-  // Write updated meter back to KV (TTL = remaining window time)
-  const ttlSeconds = Math.max(resetAt - Math.floor(Date.now() / 1000), 60);
-  await c.env.ALB_KV.put(kvKey, JSON.stringify(meter), {
-    expirationTtl: ttlSeconds,
-  });
+/**
+ * Per-IP rate gate for public no-auth routes. KV-backed, race-tolerant.
+ * Falls open on KV errors — public endpoints (manifest/health/onboarding/llms)
+ * are static enough that a brief KV outage shouldn't block discovery.
+ */
+export const publicRateMiddleware: ALBMiddleware = async (c, next) => {
+  const ip = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For") ?? "unknown";
+  const ratePerMinute = RATE_LIMITS.public;
+  const now = Date.now();
+  const kvKey = `pubrate:${ip}`;
 
-  // Set metering headers (available to downstream handlers and response)
-  c.header("X-Meter-Limit", String(FREE_ALLOCATION.maxRequests));
-  c.header("X-Meter-Remaining", String(remaining));
-  c.header("X-Meter-Reset", String(resetAt));
+  let state: RateState | null = null;
+  try {
+    state = await c.env.ALB_KV.get<RateState>(kvKey, "json");
+  } catch {
+    // KV read failed — fail open
+    await next();
+    return;
+  }
+
+  if (!state || now - state.windowStartedAt >= RATE_WINDOW_MS) {
+    state = { windowStartedAt: now, requestsInWindow: 0, creditBalance: 0 };
+  }
+
+  const resetAtMs = state.windowStartedAt + RATE_WINDOW_MS;
+
+  if (state.requestsInWindow >= ratePerMinute) {
+    return rateLimited(
+      c,
+      ratePerMinute,
+      resetAtMs,
+      `Rate limit exceeded (${ratePerMinute}/min, public tier). Register and authenticate for higher per-tier ceilings.`
+    );
+  }
+
+  state.requestsInWindow += 1;
+  setRateHeaders(c, ratePerMinute, state.requestsInWindow, resetAtMs);
+
+  // Best-effort write — TTL ~2 windows so stale state self-cleans.
+  c.executionCtx.waitUntil(
+    c.env.ALB_KV.put(kvKey, JSON.stringify(state), {
+      expirationTtl: Math.max(120, Math.ceil(RATE_WINDOW_MS / 1000) * 2),
+    }).catch(() => {})
+  );
 
   await next();
 };
 
 /**
- * Read the current meter state for an agent without incrementing.
+ * Read the current rate snapshot for an agent without incrementing.
  * Used by GET /api/me/usage.
  */
-export async function getMeterState(
-  kv: KVNamespace,
-  btcAddress: string
-): Promise<{ meter: MeterState; remaining: number; resetAt: number }> {
-  const kvKey = `meter:${btcAddress}`;
-  let meter = await kv.get<MeterState>(kvKey, "json");
-
-  if (!meter || isWindowExpired(meter.windowStart)) {
-    meter = {
-      windowStart: newWindowStart(),
-      requests: 0,
-      briefReads: 0,
-      signalSubmissions: 0,
-      emailsSent: 0,
-    };
+export async function getRateSnapshot(
+  agentDo: DurableObjectStub,
+): Promise<Omit<RateCheckJson, "allowed" | "paid">> {
+  const resp = await agentDo.fetch(new Request("http://internal/rate/snapshot"));
+  if (!resp.ok) {
+    throw new Error("Rate snapshot unavailable");
   }
-
-  const resetAt = meter.windowStart + WINDOW_SECONDS;
-  const remaining = Math.max(0, FREE_ALLOCATION.maxRequests - meter.requests);
-
-  return { meter, remaining, resetAt };
+  return await resp.json() as Omit<RateCheckJson, "allowed" | "paid">;
 }

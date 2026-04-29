@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS account_stats (
   updated_at     TEXT NOT NULL
 );
 
+-- Per-minute rate state for ALB v2. Single row, identified by id=1.
+-- credit_balance is 1 sat = 1 credit; PR2 wires top-up to fill it in.
+CREATE TABLE IF NOT EXISTS rate_state (
+  id                    INTEGER PRIMARY KEY CHECK (id = 1),
+  window_started_at_ms  INTEGER NOT NULL,
+  requests_in_window    INTEGER NOT NULL DEFAULT 0,
+  credit_balance        INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_checkins_created ON checkins(created_at);
 CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox(received_at);
 CREATE INDEX IF NOT EXISTS idx_api_usage_endpoint ON api_usage(endpoint);

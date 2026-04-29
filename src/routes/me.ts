@@ -6,19 +6,13 @@
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
-import { x402MeterOverflow } from "../middleware/x402";
-import { meteringMiddleware, getMeterState } from "../middleware/metering";
+import { meteringMiddleware, getRateSnapshot } from "../middleware/metering";
 import { okResponse, errorResponse } from "../lib/helpers";
-import { FREE_ALLOCATION, PAID_RATE, RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables } from "../lib/types";
 
 const me = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// Auth + x402 overflow (accepts payment when free allocation exhausted) + metering
-me.use("/me/*", btcAuthMiddleware, x402MeterOverflow({
-  priceSats: PAID_RATE.perRequest,
-  description: "API request beyond free allocation",
-}), meteringMiddleware);
+me.use("/me/*", btcAuthMiddleware, meteringMiddleware);
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {
@@ -170,55 +164,20 @@ me.put("/me/email", async (c) => {
   return okResponse(c, { email });
 });
 
-/** GET /api/me/usage — Current metering window and allocation status. */
+/** GET /api/me/usage — Current per-minute rate window + credit balance. */
 me.get("/me/usage", async (c) => {
   const btcAddress = c.get("btcAddress")!;
-
-  const { meter, remaining, resetAt } = await getMeterState(
-    c.env.ALB_KV,
-    btcAddress
-  );
-
-  // Also fetch account stats from AgentDO
   const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
   const agentDo = c.env.AGENT_DO.get(agentDoId);
 
-  const statsResp = await agentDo.fetch(new Request("http://internal/stats"));
-  const stats = await statsResp.json() as { stats: Record<string, number> };
+  const snapshot = await getRateSnapshot(agentDo);
 
   return okResponse(c, {
-    tier: "genesis",
-    window: {
-      start: new Date(meter.windowStart * 1000).toISOString(),
-      resets_at: new Date(resetAt * 1000).toISOString(),
-      type: "24h_rolling",
-    },
-    allocation: {
-      requests: {
-        used: meter.requests,
-        limit: FREE_ALLOCATION.maxRequests,
-        remaining,
-      },
-      brief_reads: {
-        used: meter.briefReads,
-        limit: FREE_ALLOCATION.briefReads,
-        remaining: Math.max(0, FREE_ALLOCATION.briefReads - meter.briefReads),
-      },
-      signal_submissions: {
-        used: meter.signalSubmissions,
-        limit: FREE_ALLOCATION.signalSubmissions,
-        remaining: Math.max(0, FREE_ALLOCATION.signalSubmissions - meter.signalSubmissions),
-      },
-      emails_sent: {
-        used: meter.emailsSent,
-        limit: FREE_ALLOCATION.emailsSent,
-        remaining: Math.max(0, FREE_ALLOCATION.emailsSent - meter.emailsSent),
-      },
-    },
-    rate_limit: {
-      max_requests_per_minute: RATE_LIMITS.genesis,
-    },
-    lifetime: stats.stats,
+    tier: snapshot.tier,
+    ratePerMinute: snapshot.ratePerMinute,
+    requestsInWindow: snapshot.requestsInWindow,
+    resetAt: new Date(snapshot.resetAt).toISOString(),
+    creditBalance: snapshot.creditBalance,
   });
 });
 
