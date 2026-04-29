@@ -22,11 +22,11 @@ export const FREE_ALLOCATION = {
   emailsSent: 5,
 } as const;
 
-/** Rate limits per tier (requests per minute) */
+/** Per-minute rate ceilings per tier. Public applies to no-auth endpoints. */
 export const RATE_LIMITS = {
   public: 30,
+  registered: 30,
   genesis: 120,
-  paid: 300,
 } as const;
 
 /** Email domain */

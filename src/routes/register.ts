@@ -21,9 +21,13 @@ import { resolveGenesisAgent } from "../services/agent-resolver";
 import { resolveAgentName, toEmailSlug } from "../services/name-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
 import { okResponse, errorResponse } from "../lib/helpers";
-import { EMAIL_DOMAIN, FREE_ALLOCATION, RATE_LIMITS } from "../lib/constants";
+import { EMAIL_DOMAIN, RATE_LIMITS } from "../lib/constants";
 import { VERSION } from "../version";
-import type { Env, AppVariables, RegistrationData } from "../lib/types";
+import type { Env, AppVariables, RegistrationData, Tier } from "../lib/types";
+
+function tierFromLevel(level: number): Tier {
+  return level >= 2 ? "genesis" : "registered";
+}
 
 const register = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -37,13 +41,15 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
 
   let agent: AibtcAgent;
   if (isAdmin) {
+    // Admin bypass: synthetic L1 record. Follows the registered path by default;
+    // a real L2 record from aibtc.com is the only thing that grants genesis tier.
     agent = {
       btcAddress,
       stxAddress,
       aibtcName: null,
       bnsName: null,
-      level: 2,
-      levelName: "genesis",
+      level: 1,
+      levelName: "Verified Agent",
       erc8004AgentId: null,
       checkInCount: 0,
       lastActiveAt: null,
@@ -59,14 +65,13 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       };
       const status = statusMap[resolved.code] ?? 400;
 
-      // Include onboarding guidance for non-genesis agents
+      // Include onboarding guidance when the agent isn't recognized at L1+.
       if (resolved.code === "NOT_GENESIS" || resolved.code === "NOT_FOUND") {
         return c.json({
           ok: false,
-          error: { code: "FORBIDDEN", message: resolved.error },
+          error: { code: "FORBIDDEN", message: "Registration requires a Verified Agent (L1+) record on aibtc.com. Complete identity verification first." },
           data: {
             current_level: resolved.level ?? 0,
-            required_level: 2,
             onboarding_url: "https://agentslovebitcoin.com/api/onboarding",
           },
           meta: {
@@ -84,6 +89,31 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     }
 
     agent = resolved.agent;
+
+    // Address cross-check: the BTC↔STX pair vouched for by aibtc.com must match
+    // the dual-sig headers. Mismatch means the signing key controls one address
+    // but aibtc.com has a different pair on file — point them back to the profile.
+    if (agent.btcAddress !== btcAddress || agent.stxAddress !== stxAddress) {
+      return c.json({
+        ok: false,
+        error: {
+          code: "ADDRESS_MISMATCH",
+          message: "Dual-sig addresses do not match the BTC↔STX pair on aibtc.com. Update your aibtc.com profile or sign with the keys for the registered pair.",
+        },
+        data: {
+          aibtc_btc_address: agent.btcAddress,
+          aibtc_stx_address: agent.stxAddress,
+          submitted_btc_address: btcAddress,
+          submitted_stx_address: stxAddress,
+          profile_url: "https://aibtc.com/agents",
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          version: VERSION,
+          requestId: c.get("requestId"),
+        },
+      }, 403);
+    }
   }
 
   // ── Step 6: Resolve deterministic agent name ─────────────────────────
@@ -140,7 +170,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
         status: "active",
         provisioned_at: (email?.provisioned_at as string) ?? new Date().toISOString(),
       },
-      api_access: buildApiAccess(),
+      api_access: buildApiAccess(agent.level),
       next_steps: buildNextSteps(),
     };
 
@@ -231,39 +261,30 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
       status: "active",
       provisioned_at: email.provisioned_at,
     },
-    api_access: buildApiAccess(),
+    api_access: buildApiAccess(agent.level),
     next_steps: buildNextSteps(),
   };
 
   return okResponse(c, data, 201);
 });
 
-function buildApiAccess(): RegistrationData["api_access"] {
-  const resetTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+function buildApiAccess(level: number): RegistrationData["api_access"] {
+  const tier = tierFromLevel(level);
   return {
-    tier: "genesis",
-    free_allocation: {
-      max_requests: FREE_ALLOCATION.maxRequests,
-      brief_reads: FREE_ALLOCATION.briefReads,
-      signal_submissions: FREE_ALLOCATION.signalSubmissions,
-      emails_sent: FREE_ALLOCATION.emailsSent,
-      window: "24h_rolling",
-      resets_at: resetTime,
-    },
+    tier,
     rate_limit: {
-      max_requests_per_minute: RATE_LIMITS.genesis,
+      max_requests_per_minute: RATE_LIMITS[tier],
     },
+    credit_balance: 0,
   };
 }
 
 function buildNextSteps(): RegistrationData["next_steps"] {
   return {
-    check_profile: "GET /api/me",
+    check_profile: "GET /api/me/profile",
     check_email: "GET /api/me/email",
+    check_inbox: "GET /api/me/email/inbox",
     check_usage: "GET /api/me/usage",
-    file_signal: "POST /api/signals",
-    checkin: "POST /api/checkin",
-    verify_mcp: "POST /api/mcp/verify (optional)",
   };
 }
 

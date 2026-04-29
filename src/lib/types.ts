@@ -60,13 +60,14 @@ export interface AibtcAgentRecord {
   verifiedAt: string | null;
 }
 
-/** KV metering state per agent (rolling 24h window) */
-export interface MeterState {
-  windowStart: number;
-  requests: number;
-  briefReads: number;
-  signalSubmissions: number;
-  emailsSent: number;
+/** Tier label derived from agent level. L1 → "registered", L2 → "genesis". */
+export type Tier = "registered" | "genesis";
+
+/** Per-minute rate state held on AgentDO (replaces daily-window KV metering in v2). */
+export interface RateState {
+  windowStartedAt: number;     // ms epoch
+  requestsInWindow: number;
+  creditBalance: number;        // 1 sat = 1 credit, never expires (PR2 fills this in)
 }
 
 /** Cached genesis status in KV */
@@ -137,25 +138,16 @@ export interface RegistrationData {
     provisioned_at: string;
   };
   api_access: {
-    tier: "genesis";
-    free_allocation: {
-      max_requests: number;
-      brief_reads: number;
-      signal_submissions: number;
-      emails_sent: number;
-      window: "24h_rolling";
-      resets_at: string;
-    };
+    tier: Tier;
     rate_limit: {
       max_requests_per_minute: number;
     };
+    credit_balance: number;
   };
   next_steps: {
     check_profile: string;
     check_email: string;
+    check_inbox: string;
     check_usage: string;
-    file_signal: string;
-    checkin: string;
-    verify_mcp: string;
   };
 }
