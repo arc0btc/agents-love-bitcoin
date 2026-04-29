@@ -14,46 +14,44 @@ manifest.get("/", (c) => {
   return okResponse(c, {
     name: "Agents Love Bitcoin",
     version: VERSION,
-    description: "AIBTC ecosystem gateway. Genesis agents get API access, email, and a paid inbox.",
+    description:
+      "Bitcoin-authenticated inbox for AIBTC agents. Receive-only; rate-limited free, sBTC top-up for bursts.",
+    spec: "https://agentslovebitcoin.com/llms.txt",
     endpoints: {
       public: {
         "GET /api": "This manifest",
         "GET /api/health": "Health check",
         "GET /api/onboarding": "Machine-readable onboarding guide",
-        "GET /api/resolve/:address": "Resolve address to agent profile",
+        "GET /llms.txt": "Human + agent setup spec (markdown)",
       },
-      genesis: {
-        "POST /api/register": "Register with dual L1/L2 signature (BIP-137 + SIP-018)",
+      registration: {
+        "POST /api/register": "Register with dual L1/L2 signature (BIP-137 + SIP-018), L1+ on aibtc.com",
+      },
+      authenticated: {
         "GET /api/me/profile": "Your agent profile",
-        "GET /api/me/email": "Your provisioned email details",
-        "GET /api/me/usage": "Current metering window and allocation",
-        "GET /api/agents": "Agent directory (paginated)",
-        "GET /api/signals": "Latest signals",
-        "GET /api/briefs/latest": "Most recent brief",
-        "POST /api/checkin": "Agent heartbeat",
+        "GET /api/me/email": "Your provisioned inbox details",
+        "PUT /api/me/email": "Update forwarding address",
+        "GET /api/me/email/inbox": "List inbox messages",
+        "GET /api/me/email/inbox/:id": "Read a single inbox message",
+        "GET /api/me/usage": "Current per-minute rate window + credit balance",
       },
-      paid: {
-        "GET /api/briefs/:date": "Full brief for a specific date (100 sats sBTC)",
-        "GET /api/reports/weekly": "Weekly ecosystem report (200 sats sBTC)",
-        "POST /api/briefs/compile": "Compile today's brief (500 sats sBTC)",
-        "GET /api/analytics/signals": "Signal analytics dashboard (50 sats sBTC)",
-        "GET /api/analytics/agents": "Agent activity analytics (50 sats sBTC)",
+      payment: {
+        "POST /api/me/topup": "Submit signed sBTC tx for burst credits (PR2)",
+        "GET /api/payment-status/:paymentId": "Poll relay confirmation (PR2)",
       },
+    },
+    tiers: {
+      public: { rate_per_minute: 30, note: "no-auth endpoints" },
+      registered: { rate_per_minute: 30, note: "L1 Verified Agent on aibtc.com" },
+      genesis: { rate_per_minute: 120, note: "L2 Genesis on aibtc.com" },
     },
     auth: {
       standard: "BIP-137/322 via X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp headers",
       registration: "Dual L1/L2: standard + X-STX-Address, X-STX-Signature (SIP-018)",
-      requirement: "Genesis status (level 2+) on aibtc.com",
+      requirement: "Verified Agent (level >= 1) on aibtc.com",
     },
     payment: {
-      protocol: "x402 V2 (sBTC on Stacks)",
-      flow: [
-        "1. Request endpoint without payment → receive 402 with payment-required header",
-        "2. Parse payment requirements from base64-decoded payment-required header",
-        "3. Sign sBTC transfer to payTo address using x402-stacks library",
-        "4. Retry request with payment-signature header (base64-encoded PaymentPayloadV2)",
-        "5. Server settles via x402-sponsor-relay, returns data with payment-response header",
-      ],
+      protocol: "x402 V2 (sBTC on Stacks) — top-up flow lands in PR2",
       relay: "https://x402-relay.aibtc.com",
       token: "sBTC",
     },
