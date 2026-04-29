@@ -14,20 +14,14 @@ export const SIP018_DOMAIN = {
   chainId: 1, // Stacks mainnet
 } as const;
 
-/** Free allocation per rolling 24h window */
-export const FREE_ALLOCATION = {
-  maxRequests: 100,
-  briefReads: 5,
-  signalSubmissions: 10,
-  emailsSent: 5,
-} as const;
+import type { Tier } from "./types";
 
-/** Rate limits per tier (requests per minute) */
+/** Per-minute rate ceilings per tier. Public applies to no-auth endpoints. */
 export const RATE_LIMITS = {
   public: 30,
+  registered: 30,
   genesis: 120,
-  paid: 300,
-} as const;
+} as const satisfies Record<Tier | "public", number>;
 
 /** Email domain */
 export const EMAIL_DOMAIN = "agentslovebitcoin.com";
@@ -56,16 +50,9 @@ export const SBTC_CONTRACTS: Record<string, { address: string; name: string }> =
 /** Default treasury STX address for platform-level payment endpoints */
 export const DEFAULT_TREASURY_STX_ADDRESS = "SP2GHQRCRMYY4S8PMBR49BEKX144VR437YT42SF3B";
 
-/**
- * sBTC pricing for payment-gated endpoints (in satoshis).
- * Per PRD §5.1: paidRate config.
- */
+/** sBTC pricing for overflow-meter requests (in satoshis). */
 export const PAID_RATE = {
   perRequest: 10,
-  perBrief: 100,
-  perCompile: 500,
-  perAnalytics: 50,
-  perWeeklyReport: 200,
 } as const;
 
 /** x402 header names (x402 V2 standard) */
@@ -75,8 +62,8 @@ export const X402_HEADERS = {
   PAYMENT_RESPONSE: "X-Payment-Response",
 } as const;
 
-/** Rolling metering window duration (seconds) — 24 hours */
-export const WINDOW_SECONDS = 86400;
+/** Per-minute rate window duration (ms) */
+export const RATE_WINDOW_MS = 60_000;
 
 /** Relay settle timeout (ms) */
 export const RELAY_SETTLE_TIMEOUT_MS = 65_000;

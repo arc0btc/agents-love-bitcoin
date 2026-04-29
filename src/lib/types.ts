@@ -33,6 +33,8 @@ export interface AppVariables {
   x402Payer?: string;
   /** Set by x402 middleware when payment txid is available */
   x402Txid?: string;
+  /** Set by meteringMiddleware so /api/me/usage can avoid a second DO round-trip */
+  rateResult?: RateCheckResult;
 }
 
 /** Typed Hono context */
@@ -60,13 +62,28 @@ export interface AibtcAgentRecord {
   verifiedAt: string | null;
 }
 
-/** KV metering state per agent (rolling 24h window) */
-export interface MeterState {
-  windowStart: number;
-  requests: number;
-  briefReads: number;
-  signalSubmissions: number;
-  emailsSent: number;
+/** Tier label derived from agent level. L1 → "registered", L2 → "genesis". */
+export type Tier = "registered" | "genesis";
+
+/** Read-only rate snapshot returned by AgentDO and surfaced via /api/me/usage. */
+export interface RateSnapshot {
+  tier: Tier;
+  ratePerMinute: number;
+  requestsInWindow: number;
+  resetAt: number;          // ms epoch of window end
+  creditBalance: number;     // 1 sat = 1 credit, never expires
+}
+
+/** Result of an atomic rate check + increment on AgentDO. */
+export interface RateCheckResult extends RateSnapshot {
+  allowed: boolean;
+  paid: boolean;             // true when the request was funded by a credit instead of free quota
+}
+
+/** Per-IP rate state for public no-auth routes, stored in KV. */
+export interface PublicRateState {
+  windowStartedAt: number;
+  requestsInWindow: number;
 }
 
 /** Cached genesis status in KV */
@@ -137,25 +154,16 @@ export interface RegistrationData {
     provisioned_at: string;
   };
   api_access: {
-    tier: "genesis";
-    free_allocation: {
-      max_requests: number;
-      brief_reads: number;
-      signal_submissions: number;
-      emails_sent: number;
-      window: "24h_rolling";
-      resets_at: string;
-    };
+    tier: Tier;
     rate_limit: {
       max_requests_per_minute: number;
     };
+    credit_balance: number;
   };
   next_steps: {
     check_profile: string;
     check_email: string;
+    check_inbox: string;
     check_usage: string;
-    file_signal: string;
-    checkin: string;
-    verify_mcp: string;
   };
 }

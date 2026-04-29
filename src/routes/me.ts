@@ -1,24 +1,27 @@
 /**
  * Authenticated /api/me/* routes — agent's own profile, email, and usage.
  *
- * All routes require BTC auth (btcAuthMiddleware) and metering.
+ * All routes require BTC auth. Inbox/profile/email actions go through the
+ * per-tier rate gate; /me/usage peeks at the rate state without incrementing
+ * so an agent at the ceiling can still inspect when its window resets.
  */
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
-import { x402MeterOverflow } from "../middleware/x402";
-import { meteringMiddleware, getMeterState } from "../middleware/metering";
+import { meteringMiddleware, peekMeteringMiddleware } from "../middleware/metering";
 import { okResponse, errorResponse } from "../lib/helpers";
-import { FREE_ALLOCATION, PAID_RATE, RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables } from "../lib/types";
 
 const me = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// Auth + x402 overflow (accepts payment when free allocation exhausted) + metering
-me.use("/me/*", btcAuthMiddleware, x402MeterOverflow({
-  priceSats: PAID_RATE.perRequest,
-  description: "API request beyond free allocation",
-}), meteringMiddleware);
+me.use("/me/*", btcAuthMiddleware, async (c, next) => {
+  // Usage is a read-only status endpoint — peek the rate state without incrementing
+  // so agents at the ceiling can still inspect their quota.
+  if (c.req.path === "/api/me/usage") {
+    return peekMeteringMiddleware(c, next);
+  }
+  return meteringMiddleware(c, next);
+});
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {
@@ -170,55 +173,24 @@ me.put("/me/email", async (c) => {
   return okResponse(c, { email });
 });
 
-/** GET /api/me/usage — Current metering window and allocation status. */
-me.get("/me/usage", async (c) => {
-  const btcAddress = c.get("btcAddress")!;
-
-  const { meter, remaining, resetAt } = await getMeterState(
-    c.env.ALB_KV,
-    btcAddress
-  );
-
-  // Also fetch account stats from AgentDO
-  const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
-  const agentDo = c.env.AGENT_DO.get(agentDoId);
-
-  const statsResp = await agentDo.fetch(new Request("http://internal/stats"));
-  const stats = await statsResp.json() as { stats: Record<string, number> };
-
+/**
+ * GET /api/me/usage — Current per-minute rate window + credit balance.
+ *
+ * Status endpoint: peekMeteringMiddleware reads the rate state without
+ * incrementing the window, so this call is safe to poll from agents that are
+ * already at their ceiling.
+ */
+me.get("/me/usage", (c) => {
+  const r = c.get("rateResult");
+  if (!r) {
+    return errorResponse(c, "INTERNAL_ERROR", "Rate state unavailable", 500);
+  }
   return okResponse(c, {
-    tier: "genesis",
-    window: {
-      start: new Date(meter.windowStart * 1000).toISOString(),
-      resets_at: new Date(resetAt * 1000).toISOString(),
-      type: "24h_rolling",
-    },
-    allocation: {
-      requests: {
-        used: meter.requests,
-        limit: FREE_ALLOCATION.maxRequests,
-        remaining,
-      },
-      brief_reads: {
-        used: meter.briefReads,
-        limit: FREE_ALLOCATION.briefReads,
-        remaining: Math.max(0, FREE_ALLOCATION.briefReads - meter.briefReads),
-      },
-      signal_submissions: {
-        used: meter.signalSubmissions,
-        limit: FREE_ALLOCATION.signalSubmissions,
-        remaining: Math.max(0, FREE_ALLOCATION.signalSubmissions - meter.signalSubmissions),
-      },
-      emails_sent: {
-        used: meter.emailsSent,
-        limit: FREE_ALLOCATION.emailsSent,
-        remaining: Math.max(0, FREE_ALLOCATION.emailsSent - meter.emailsSent),
-      },
-    },
-    rate_limit: {
-      max_requests_per_minute: RATE_LIMITS.genesis,
-    },
-    lifetime: stats.stats,
+    tier: r.tier,
+    ratePerMinute: r.ratePerMinute,
+    requestsInWindow: r.requestsInWindow,
+    resetAt: new Date(r.resetAt).toISOString(),
+    creditBalance: r.creditBalance,
   });
 });
 
