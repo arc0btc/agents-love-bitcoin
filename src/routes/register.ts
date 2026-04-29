@@ -20,14 +20,10 @@ import type { AibtcAgent } from "aibtc-genesis-gate";
 import { resolveGenesisAgent } from "../services/agent-resolver";
 import { resolveAgentName, toEmailSlug } from "../services/name-resolver";
 import { dualSigAuthMiddleware } from "../middleware/auth";
-import { okResponse, errorResponse } from "../lib/helpers";
+import { okResponse, errorResponse, tierFromLevel } from "../lib/helpers";
 import { EMAIL_DOMAIN, RATE_LIMITS } from "../lib/constants";
 import { VERSION } from "../version";
-import type { Env, AppVariables, RegistrationData, Tier } from "../lib/types";
-
-function tierFromLevel(level: number): Tier {
-  return level >= 2 ? "genesis" : "registered";
-}
+import type { Env, AppVariables, RegistrationData } from "../lib/types";
 
 const register = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 

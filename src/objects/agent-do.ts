@@ -5,24 +5,14 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { AGENT_DO_SCHEMA } from "./schema";
-import { RATE_LIMITS } from "../lib/constants";
-import { RATE_WINDOW_MS } from "../lib/constants";
-import type { Env, Tier } from "../lib/types";
+import { RATE_LIMITS, RATE_WINDOW_MS } from "../lib/constants";
+import { tierFromLevel } from "../lib/helpers";
+import type { Env, Tier, RateCheckResult } from "../lib/types";
 
 interface RateStateRow {
   window_started_at_ms: number;
   requests_in_window: number;
   credit_balance: number;
-}
-
-export interface RateCheckResult {
-  allowed: boolean;
-  tier: Tier;
-  ratePerMinute: number;
-  requestsInWindow: number;
-  resetAt: number;          // ms epoch of window end
-  creditBalance: number;
-  paid: boolean;             // true when the request was funded by a credit instead of free quota
 }
 
 interface ProfileRow {
@@ -248,7 +238,7 @@ export class AgentDO extends DurableObject<Env> {
       .exec(`SELECT level FROM profile LIMIT 1`)
       .toArray() as unknown as Array<{ level: number }>;
     if (rows.length === 0) return "registered";
-    return rows[0].level >= 2 ? "genesis" : "registered";
+    return tierFromLevel(rows[0].level);
   }
 
   /** Read the rate-state row, initializing it if missing or after a window roll. */
@@ -334,22 +324,6 @@ export class AgentDO extends DurableObject<Env> {
     };
   }
 
-  /** Read-only rate snapshot for /api/me/usage — no increment, no window roll. */
-  async getRateSnapshot(): Promise<Omit<RateCheckResult, "allowed" | "paid">> {
-    this.ensureSchema();
-    const now = Date.now();
-    const tier = this.resolveTier();
-    const ratePerMinute = RATE_LIMITS[tier];
-    const row = this.loadRateRow(now);
-    return {
-      tier,
-      ratePerMinute,
-      requestsInWindow: row.requests_in_window,
-      resetAt: row.window_started_at_ms + RATE_WINDOW_MS,
-      creditBalance: row.credit_balance,
-    };
-  }
-
   /** HTTP handler for internal DO requests. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -378,11 +352,6 @@ export class AgentDO extends DurableObject<Env> {
     if (url.pathname === "/rate/check" && request.method === "POST") {
       const result = await this.checkAndIncrementRate();
       return Response.json(result);
-    }
-
-    if (url.pathname === "/rate/snapshot" && request.method === "GET") {
-      const snapshot = await this.getRateSnapshot();
-      return Response.json(snapshot);
     }
 
     if (url.pathname === "/email/forward" && request.method === "PUT") {

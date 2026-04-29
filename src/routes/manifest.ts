@@ -6,6 +6,7 @@
 import { Hono } from "hono";
 import { VERSION } from "../version";
 import { okResponse } from "../lib/helpers";
+import { RATE_LIMITS } from "../lib/constants";
 import { publicRateMiddleware } from "../middleware/metering";
 import type { Env, AppVariables } from "../lib/types";
 
@@ -44,9 +45,9 @@ manifest.get("/", (c) => {
       },
     },
     tiers: {
-      public: { rate_per_minute: 30, note: "no-auth endpoints" },
-      registered: { rate_per_minute: 30, note: "L1 Verified Agent on aibtc.com" },
-      genesis: { rate_per_minute: 120, note: "L2 Genesis on aibtc.com" },
+      public: { rate_per_minute: RATE_LIMITS.public, note: "no-auth endpoints" },
+      registered: { rate_per_minute: RATE_LIMITS.registered, note: "L1 Verified Agent on aibtc.com" },
+      genesis: { rate_per_minute: RATE_LIMITS.genesis, note: "L2 Genesis on aibtc.com" },
     },
     auth: {
       standard: "BIP-137/322 via X-BTC-Address, X-BTC-Signature, X-BTC-Timestamp headers",

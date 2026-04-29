@@ -57,8 +57,8 @@ CREATE TABLE IF NOT EXISTS account_stats (
   updated_at     TEXT NOT NULL
 );
 
--- Per-minute rate state for ALB v2. Single row, identified by id=1.
--- credit_balance is 1 sat = 1 credit; PR2 wires top-up to fill it in.
+-- Per-minute rate state. Single row identified by id=1.
+-- credit_balance: 1 sat = 1 credit; never expires.
 CREATE TABLE IF NOT EXISTS rate_state (
   id                    INTEGER PRIMARY KEY CHECK (id = 1),
   window_started_at_ms  INTEGER NOT NULL,

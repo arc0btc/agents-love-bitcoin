@@ -24,7 +24,7 @@ export async function resolveGenesisAgent(
 ): Promise<ResolveResult> {
   const config: GenesisGateConfig = {
     kv: env.ALB_KV,
-    minLevel: 1, // ALB v2: registration is open to L1+ (Verified Agents). L2 derives "genesis" tier downstream.
+    minLevel: 1, // Registration open to L1+; L2 derives the "genesis" tier downstream.
     requireName: false, // Name resolved separately via landing-page API
   };
   return resolve(btcAddress, config);

@@ -1,6 +1,11 @@
 import type { Context } from "hono";
 import { VERSION } from "../version";
-import type { ApiResponse } from "./types";
+import type { ApiResponse, Tier } from "./types";
+
+/** Map an agent level to a tier. L2+ = genesis, otherwise registered. */
+export function tierFromLevel(level: number): Tier {
+  return level >= 2 ? "genesis" : "registered";
+}
 
 /** Generate a unique request ID */
 export function generateRequestId(): string {

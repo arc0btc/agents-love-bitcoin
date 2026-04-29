@@ -2,7 +2,7 @@
  * x402 payment middleware — gates endpoints behind sBTC payment.
  *
  * `x402PaymentGate(config)` — always-pay middleware for premium endpoints.
- * Reserved for the topup/payment-status flow landing in PR2.
+ * Used by the top-up / payment-status flow.
  *
  * Flow:
  * - Check for `payment-signature` header (base64-encoded PaymentPayloadV2)

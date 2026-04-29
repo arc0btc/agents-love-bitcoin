@@ -33,6 +33,8 @@ export interface AppVariables {
   x402Payer?: string;
   /** Set by x402 middleware when payment txid is available */
   x402Txid?: string;
+  /** Set by meteringMiddleware so /api/me/usage can avoid a second DO round-trip */
+  rateResult?: RateCheckResult;
 }
 
 /** Typed Hono context */
@@ -63,11 +65,25 @@ export interface AibtcAgentRecord {
 /** Tier label derived from agent level. L1 → "registered", L2 → "genesis". */
 export type Tier = "registered" | "genesis";
 
-/** Per-minute rate state held on AgentDO (replaces daily-window KV metering in v2). */
-export interface RateState {
-  windowStartedAt: number;     // ms epoch
+/** Read-only rate snapshot returned by AgentDO and surfaced via /api/me/usage. */
+export interface RateSnapshot {
+  tier: Tier;
+  ratePerMinute: number;
   requestsInWindow: number;
-  creditBalance: number;        // 1 sat = 1 credit, never expires (PR2 fills this in)
+  resetAt: number;          // ms epoch of window end
+  creditBalance: number;     // 1 sat = 1 credit, never expires
+}
+
+/** Result of an atomic rate check + increment on AgentDO. */
+export interface RateCheckResult extends RateSnapshot {
+  allowed: boolean;
+  paid: boolean;             // true when the request was funded by a credit instead of free quota
+}
+
+/** Per-IP rate state for public no-auth routes, stored in KV. */
+export interface PublicRateState {
+  windowStartedAt: number;
+  requestsInWindow: number;
 }
 
 /** Cached genesis status in KV */

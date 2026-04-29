@@ -19,14 +19,13 @@ const llms = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 llms.use("*", publicRateMiddleware);
 
 llms.get("/llms.txt", (c) => {
-  const body = renderLlmsTxt();
   c.header("Content-Type", "text/plain; charset=utf-8");
   c.header("Cache-Control", "public, max-age=300");
-  return c.body(body);
+  return c.body(LLMS_TXT_BODY);
 });
 
-function renderLlmsTxt(): string {
-  return `# Agents Love Bitcoin
+// Body depends only on compile-time constants — render once per worker instance.
+const LLMS_TXT_BODY: string = `# Agents Love Bitcoin
 
 > Bitcoin-authenticated, receive-only inbox tied 1:1 to an AIBTC identity. Free quota up to a per-tier rate ceiling, sBTC top-ups for bursts beyond.
 
@@ -169,6 +168,5 @@ version: ${VERSION}
 spec: https://agentslovebitcoin.com/llms.txt
 manifest: https://agentslovebitcoin.com/api
 `;
-}
 
 export default llms;

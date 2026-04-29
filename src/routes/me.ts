@@ -6,7 +6,7 @@
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
-import { meteringMiddleware, getRateSnapshot } from "../middleware/metering";
+import { meteringMiddleware } from "../middleware/metering";
 import { okResponse, errorResponse } from "../lib/helpers";
 import type { Env, AppVariables } from "../lib/types";
 
@@ -165,19 +165,19 @@ me.put("/me/email", async (c) => {
 });
 
 /** GET /api/me/usage — Current per-minute rate window + credit balance. */
-me.get("/me/usage", async (c) => {
-  const btcAddress = c.get("btcAddress")!;
-  const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
-  const agentDo = c.env.AGENT_DO.get(agentDoId);
-
-  const snapshot = await getRateSnapshot(agentDo);
-
+me.get("/me/usage", (c) => {
+  // meteringMiddleware ran first and stashed the freshly-incremented rate
+  // result on the context — reuse it instead of doing a second DO round-trip.
+  const r = c.get("rateResult");
+  if (!r) {
+    return errorResponse(c, "INTERNAL_ERROR", "Rate state unavailable", 500);
+  }
   return okResponse(c, {
-    tier: snapshot.tier,
-    ratePerMinute: snapshot.ratePerMinute,
-    requestsInWindow: snapshot.requestsInWindow,
-    resetAt: new Date(snapshot.resetAt).toISOString(),
-    creditBalance: snapshot.creditBalance,
+    tier: r.tier,
+    ratePerMinute: r.ratePerMinute,
+    requestsInWindow: r.requestsInWindow,
+    resetAt: new Date(r.resetAt).toISOString(),
+    creditBalance: r.creditBalance,
   });
 });
 

@@ -3,32 +3,21 @@
  *
  * - `meteringMiddleware`: authenticated routes. Defers to AgentDO.checkAndIncrementRate
  *   which derives the tier from the agent's level and atomically counts within a
- *   60-second window. Paid requests (credit-funded, PR2) bypass the window cap entirely.
+ *   60-second window. Credit-funded requests bypass the window cap entirely.
  * - `publicRateMiddleware`: no-auth routes. Per-IP cap at RATE_LIMITS.public via KV.
  *   Race-tolerant — KV has no atomic increment but a 30/min ceiling per IP is fine.
  *
  * Both surfaces emit X-Rate-Limit, X-Rate-Remaining, and X-Rate-Reset (seconds-until-reset).
- * On 429 the body carries a forward-compat payment hint pointing at /api/me/topup
- * (PR2 implementation).
+ * On 429 the body carries a forward-compat payment hint pointing at /api/me/topup.
  */
 
 import type { MiddlewareHandler } from "hono";
 import { RATE_LIMITS, RATE_WINDOW_MS } from "../lib/constants";
 import { errorResponse } from "../lib/helpers";
 import { VERSION } from "../version";
-import type { Env, AppVariables, RateState } from "../lib/types";
+import type { Env, AppVariables, PublicRateState, RateCheckResult } from "../lib/types";
 
 type ALBMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }>;
-
-interface RateCheckJson {
-  allowed: boolean;
-  tier: "registered" | "genesis";
-  ratePerMinute: number;
-  requestsInWindow: number;
-  resetAt: number;
-  creditBalance: number;
-  paid: boolean;
-}
 
 function setRateHeaders(
   c: Parameters<ALBMiddleware>[0],
@@ -54,8 +43,8 @@ function rateLimited(
     {
       ok: false,
       error: { code: "RATE_LIMITED", message },
-      // Forward-compat payment hint. /api/me/topup lands in PR2; clients can design
-      // retry-after-payment logic against this contract today.
+      // Forward-compat hint so clients can build retry-after-payment logic
+      // against a stable contract before /api/me/topup ships.
       payment: {
         amountSats: 100,
         perCredits: 100,
@@ -100,7 +89,7 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
   if (!resp.ok) {
     return errorResponse(c, "INTERNAL_ERROR", "Rate gate unavailable", 500);
   }
-  const result = await resp.json() as RateCheckJson;
+  const result = await resp.json() as RateCheckResult;
 
   if (!result.allowed) {
     return rateLimited(
@@ -111,6 +100,8 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
     );
   }
 
+  // Stash so /api/me/usage can read it back without a second DO round-trip.
+  c.set("rateResult", result);
   setRateHeaders(c, result.ratePerMinute, result.requestsInWindow, result.resetAt);
   await next();
 };
@@ -126,9 +117,9 @@ export const publicRateMiddleware: ALBMiddleware = async (c, next) => {
   const now = Date.now();
   const kvKey = `pubrate:${ip}`;
 
-  let state: RateState | null = null;
+  let state: PublicRateState | null = null;
   try {
-    state = await c.env.ALB_KV.get<RateState>(kvKey, "json");
+    state = await c.env.ALB_KV.get<PublicRateState>(kvKey, "json");
   } catch {
     // KV read failed — fail open
     await next();
@@ -136,7 +127,7 @@ export const publicRateMiddleware: ALBMiddleware = async (c, next) => {
   }
 
   if (!state || now - state.windowStartedAt >= RATE_WINDOW_MS) {
-    state = { windowStartedAt: now, requestsInWindow: 0, creditBalance: 0 };
+    state = { windowStartedAt: now, requestsInWindow: 0 };
   }
 
   const resetAtMs = state.windowStartedAt + RATE_WINDOW_MS;
@@ -162,17 +153,3 @@ export const publicRateMiddleware: ALBMiddleware = async (c, next) => {
 
   await next();
 };
-
-/**
- * Read the current rate snapshot for an agent without incrementing.
- * Used by GET /api/me/usage.
- */
-export async function getRateSnapshot(
-  agentDo: DurableObjectStub,
-): Promise<Omit<RateCheckJson, "allowed" | "paid">> {
-  const resp = await agentDo.fetch(new Request("http://internal/rate/snapshot"));
-  if (!resp.ok) {
-    throw new Error("Rate snapshot unavailable");
-  }
-  return await resp.json() as Omit<RateCheckJson, "allowed" | "paid">;
-}

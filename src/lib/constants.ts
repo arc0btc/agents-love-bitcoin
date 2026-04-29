@@ -14,12 +14,14 @@ export const SIP018_DOMAIN = {
   chainId: 1, // Stacks mainnet
 } as const;
 
+import type { Tier } from "./types";
+
 /** Per-minute rate ceilings per tier. Public applies to no-auth endpoints. */
 export const RATE_LIMITS = {
   public: 30,
   registered: 30,
   genesis: 120,
-} as const;
+} as const satisfies Record<Tier | "public", number>;
 
 /** Email domain */
 export const EMAIL_DOMAIN = "agentslovebitcoin.com";
@@ -48,10 +50,7 @@ export const SBTC_CONTRACTS: Record<string, { address: string; name: string }> =
 /** Default treasury STX address for platform-level payment endpoints */
 export const DEFAULT_TREASURY_STX_ADDRESS = "SP2GHQRCRMYY4S8PMBR49BEKX144VR437YT42SF3B";
 
-/**
- * sBTC pricing for overflow-meter requests (in satoshis).
- * PR2 will revisit and add per-credit anchoring; perRequest stays for now.
- */
+/** sBTC pricing for overflow-meter requests (in satoshis). */
 export const PAID_RATE = {
   perRequest: 10,
 } as const;
