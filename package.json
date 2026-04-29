@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy",
-    "deploy:dry": "wrangler deploy --dry-run"
+    "deploy:dry": "wrangler deploy --dry-run",
+    "test": "bun test"
   },
   "dependencies": {
     "aibtc-genesis-gate": "github:arc0btc/aibtc-genesis-gate",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
+    "@types/bun": "^1.3.13",
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0",
     "wrangler": "^3.100.0"

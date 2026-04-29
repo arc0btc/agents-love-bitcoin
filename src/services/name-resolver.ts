@@ -3,8 +3,11 @@
  *
  * Calls the AIBTC landing-page `/api/get-name` endpoint to resolve a BTC
  * address to its deterministic agent name. This name is used for email
- * provisioning instead of the genesis gate aibtcName, ensuring addresses
- * always map to the same slug regardless of when they register.
+ * provisioning, ensuring addresses always map to the same display name
+ * regardless of when they register.
+ *
+ * For converting the returned display name to an email local part, see
+ * `aibtcNameToEmailLocal` in `../lib/names`.
  */
 
 import { AIBTC_API_URL } from "../lib/constants";
@@ -44,15 +47,4 @@ export async function resolveAgentName(btcAddress: string): Promise<NameResolveR
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: `Name resolution failed: ${message}` };
   }
-}
-
-/**
- * Convert a name to a URL-safe email slug.
- * Lowercases, replaces non-alphanumeric with hyphens, trims hyphens.
- */
-export function toEmailSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
