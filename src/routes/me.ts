@@ -1,7 +1,9 @@
 /**
  * Authenticated /api/me/* routes — agent's own profile, email, and usage.
  *
- * All routes require BTC auth (btcAuthMiddleware) and metering.
+ * All routes require BTC auth. Inbox/profile/email actions go through the
+ * per-tier rate gate; /me/usage peeks at the rate state without incrementing
+ * so an agent at the ceiling can still inspect when its window resets.
  */
 
 import { Hono } from "hono";
@@ -171,10 +173,14 @@ me.put("/me/email", async (c) => {
   return okResponse(c, { email });
 });
 
-/** GET /api/me/usage — Current per-minute rate window + credit balance. */
+/**
+ * GET /api/me/usage — Current per-minute rate window + credit balance.
+ *
+ * Status endpoint: peekMeteringMiddleware reads the rate state without
+ * incrementing the window, so this call is safe to poll from agents that are
+ * already at their ceiling.
+ */
 me.get("/me/usage", (c) => {
-  // meteringMiddleware ran first and stashed the freshly-incremented rate
-  // result on the context — reuse it instead of doing a second DO round-trip.
   const r = c.get("rateResult");
   if (!r) {
     return errorResponse(c, "INTERNAL_ERROR", "Rate state unavailable", 500);
