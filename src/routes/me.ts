@@ -6,13 +6,20 @@
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
-import { meteringMiddleware } from "../middleware/metering";
+import { meteringMiddleware, peekMeteringMiddleware } from "../middleware/metering";
 import { okResponse, errorResponse } from "../lib/helpers";
 import type { Env, AppVariables } from "../lib/types";
 
 const me = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-me.use("/me/*", btcAuthMiddleware, meteringMiddleware);
+me.use("/me/*", btcAuthMiddleware, async (c, next) => {
+  // Usage is a read-only status endpoint — peek the rate state without incrementing
+  // so agents at the ceiling can still inspect their quota.
+  if (c.req.path === "/api/me/usage") {
+    return peekMeteringMiddleware(c, next);
+  }
+  return meteringMiddleware(c, next);
+});
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {

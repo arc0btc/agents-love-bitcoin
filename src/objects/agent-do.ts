@@ -324,6 +324,26 @@ export class AgentDO extends DurableObject<Env> {
     };
   }
 
+  /** Read current rate state without incrementing. Safe to call from status endpoints. */
+  peekRate(): RateCheckResult {
+    this.ensureSchema();
+    const now = Date.now();
+    const tier = this.resolveTier();
+    const ratePerMinute = RATE_LIMITS[tier];
+    const row = this.loadRateRow(now);
+    const resetAt = row.window_started_at_ms + RATE_WINDOW_MS;
+    const allowed = row.requests_in_window < ratePerMinute || row.credit_balance > 0;
+    return {
+      allowed,
+      tier,
+      ratePerMinute,
+      requestsInWindow: row.requests_in_window,
+      resetAt,
+      creditBalance: row.credit_balance,
+      paid: false,
+    };
+  }
+
   /** HTTP handler for internal DO requests. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -351,6 +371,11 @@ export class AgentDO extends DurableObject<Env> {
 
     if (url.pathname === "/rate/check" && request.method === "POST") {
       const result = await this.checkAndIncrementRate();
+      return Response.json(result);
+    }
+
+    if (url.pathname === "/rate/peek" && request.method === "GET") {
+      const result = this.peekRate();
       return Response.json(result);
     }
 

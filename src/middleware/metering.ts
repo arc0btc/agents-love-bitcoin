@@ -107,6 +107,31 @@ export const meteringMiddleware: ALBMiddleware = async (c, next) => {
 };
 
 /**
+ * Read-only rate peek for status endpoints (e.g. /api/me/usage).
+ * Reads current window state without incrementing — agents at the ceiling can
+ * still inspect their quota. Must run after btcAuthMiddleware.
+ */
+export const peekMeteringMiddleware: ALBMiddleware = async (c, next) => {
+  const btcAddress = c.get("btcAddress");
+  if (!btcAddress) {
+    return errorResponse(c, "UNAUTHORIZED", "Authentication required", 401);
+  }
+
+  const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
+  const agentDo = c.env.AGENT_DO.get(agentDoId);
+
+  const resp = await agentDo.fetch(new Request("http://internal/rate/peek"));
+  if (!resp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Rate state unavailable", 500);
+  }
+  const result = await resp.json() as RateCheckResult;
+
+  c.set("rateResult", result);
+  setRateHeaders(c, result.ratePerMinute, result.requestsInWindow, result.resetAt);
+  await next();
+};
+
+/**
  * Per-IP rate gate for public no-auth routes. KV-backed, race-tolerant.
  * Falls open on KV errors — public endpoints (manifest/health/onboarding/llms)
  * are static enough that a brief KV outage shouldn't block discovery.
