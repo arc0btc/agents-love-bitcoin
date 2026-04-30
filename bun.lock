@@ -167,7 +167,7 @@
 
     "acorn-walk": ["acorn-walk@8.3.2", "", {}, "sha512-cjkyv4OtNCIeqhHrfS81QWXoCBPExR/J62oyEqepVw8WaQeSqpW2uhuLPh1m9eWhDuOo/jUXVTlifvesOWp/4A=="],
 
-    "aibtc-genesis-gate": ["aibtc-genesis-gate@github:arc0btc/aibtc-genesis-gate#7438318", { "dependencies": { "hono": "^4.0.0" } }, "arc0btc-aibtc-genesis-gate-7438318"],
+    "aibtc-genesis-gate": ["aibtc-genesis-gate@github:arc0btc/aibtc-genesis-gate#17572b7", { "dependencies": { "hono": "^4.0.0" } }, "arc0btc-aibtc-genesis-gate-17572b7", "sha512-0bhUvMHZb9lh6znGZBDrLlro5Wr9enApKIrur+Ruic41NpA0kAMLxdNeakD7Lr7Ji3EPfhRWi0onKxswNlKE/w=="],
 
     "as-table": ["as-table@1.0.55", "", { "dependencies": { "printable-characters": "^1.0.42" } }, "sha512-xvsWESUJn0JN421Xb9MQw6AsMHRCUknCe0Wjlxvjud80mU4E6hQf1A6NzQKcYNmYw62MfzEtXc+badstZP3JpQ=="],
 
