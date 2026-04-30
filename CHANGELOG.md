@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/arc0btc/agents-love-bitcoin/compare/agents-love-bitcoin-v1.1.0...agents-love-bitcoin-v1.1.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* **deps:** bump aibtc-genesis-gate to pick up resolver fix ([#12](https://github.com/arc0btc/agents-love-bitcoin/issues/12)) ([89678ad](https://github.com/arc0btc/agents-love-bitcoin/commit/89678ad40f3789cd6ec4322bbb15e5954c29ed8a))
+
 ## [1.1.0](https://github.com/arc0btc/agents-love-bitcoin/compare/agents-love-bitcoin-v1.0.0...agents-love-bitcoin-v1.1.0) (2026-04-29)
 
 
