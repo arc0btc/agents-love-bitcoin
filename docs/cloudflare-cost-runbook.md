@@ -10,11 +10,12 @@ Per-PR baselines, inventories, and smoke captures live under `.planning/`
 
 ## PR 1 — Replace metering middleware with `ratelimits` binding
 
-**PR:** `arc0btc/agents-love-bitcoin#<pending>`
+**PR:** `arc0btc/agents-love-bitcoin#15`
 **Branch:** `fix/cf-cost-pr1-ratelimits`
 **Plan section:** `cloudflare-cost-cleanup-plan-2026-05.md` → "PR 1".
-**Phase 0 baseline:** `.planning/2026-05-04-baseline.md` (queries + window;
-operator captures numbers from the arc0btc CF account before merge).
+**Phase 0 baseline:** `.planning/2026-05-04-baseline.md`. Captured
+`2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z` against the Stacklets CF account
+(`916093ba9c76cdc56aad0e16161675f1`).
 
 ### Scope
 
@@ -68,13 +69,19 @@ operator captures numbers from the arc0btc CF account before merge).
 
 ### Post-deploy actuals
 
+Pre-deploy column captured `2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z`.
+Cloudflare's DO metrics return one namespace per script regardless of how
+many DO classes are declared, so `AgentDO` + `GlobalDO` totals collapse into
+one `ALB DO` line.
+
 | Metric | Pre-deploy 24h total | Pre-deploy rate/h | Post-deploy 24h total | Post-deploy rate/h | Change |
 |---|---:|---:|---:|---:|---:|
-| `ALB_KV` writes | TBD | TBD | TBD | TBD | TBD |
-| `ALB_KV` reads | TBD | TBD | TBD | TBD | TBD |
-| AgentDO rows-written | TBD | TBD | TBD | TBD | TBD |
-| AgentDO rows-read | TBD | TBD | TBD | TBD | TBD |
-| GlobalDO rows-read | TBD | TBD | TBD | TBD | TBD |
+| `ALB_KV` writes | 1,119 | 47/h | TBD | TBD | TBD |
+| `ALB_KV` reads | 1,723 | 72/h | TBD | TBD | TBD |
+| ALB DO rows-written | 1,150 | 48/h | TBD | TBD | TBD |
+| ALB DO rows-read | 7,427 | 309/h | TBD | TBD | TBD |
+| ALB DO invocations | 1,385 | 58/h | TBD | TBD | TBD |
+| Worker invocations | 927 | 39/h | TBD | TBD | TBD |
 
 ### Rollback signal
 
