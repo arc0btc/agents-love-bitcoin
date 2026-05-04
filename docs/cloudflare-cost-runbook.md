@@ -67,21 +67,57 @@ Per-PR baselines, inventories, and smoke captures live under `.planning/`
 - **Cost signal:** rerun the same four GraphQL queries against the 24h post
   deploy window. Fill in the actuals table below.
 
-### Post-deploy actuals
+### Post-deploy actuals (accelerated 2h verification)
 
-Pre-deploy column captured `2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z`.
-Cloudflare's DO metrics return one namespace per script regardless of how
-many DO classes are declared, so `AgentDO` + `GlobalDO` totals collapse into
-one `ALB DO` line.
+Per-PR verification ran at 2h instead of 24h to keep the campaign moving;
+the long tail confirmation falls out of the next PR's pre-deploy capture.
 
-| Metric | Pre-deploy 24h total | Pre-deploy rate/h | Post-deploy 24h total | Post-deploy rate/h | Change |
-|---|---:|---:|---:|---:|---:|
-| `ALB_KV` writes | 1,119 | 47/h | TBD | TBD | TBD |
-| `ALB_KV` reads | 1,723 | 72/h | TBD | TBD | TBD |
-| ALB DO rows-written | 1,150 | 48/h | TBD | TBD | TBD |
-| ALB DO rows-read | 7,427 | 309/h | TBD | TBD | TBD |
-| ALB DO invocations | 1,385 | 58/h | TBD | TBD | TBD |
-| Worker invocations | 927 | 39/h | TBD | TBD | TBD |
+| Window | Span |
+|---|---|
+| Pre-deploy | `2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z` (24h) |
+| Post-deploy | `2026-05-04T16:37:00Z → 2026-05-04T18:43:24Z` (2h 6min) |
+
+Cloudflare's DO metrics return one namespace per (script, class). The
+deploy of PR 1 lit up `GlobalDO` as a separately-tracked namespace
+(`2ce99806ef464eadb5794a4942277616`) since the new middleware reads
+`agent_index` for tier resolution. AgentDO stays on the original
+namespace (`79e44de26ac8464787e3fb0b3a06f92f`). Post-deploy rates are
+combined unless noted.
+
+| Metric | Pre-deploy rate/h | Post-deploy rate/h | Change |
+|---|---:|---:|---:|
+| `ALB_KV` writes | 47/h | **0/h** | **-100%** |
+| `ALB_KV` reads | 72/h | 0/h | — (no genesis cache hits in window) |
+| `ALB_KV` deletes | 0/h | 0/h | flat |
+| AgentDO rows-written | 48/h | **7.6/h** | **-84%** |
+| AgentDO rows-read | 309/h | 243/h | -21% |
+| AgentDO invocations | 58/h | 38/h | -34% |
+| GlobalDO rows-written | n/a | 0/h | new namespace |
+| GlobalDO rows-read | n/a | 36/h | new namespace |
+| GlobalDO invocations | n/a | 26/h | new namespace |
+| Combined ALB DO rows-written | 48/h | **7.6/h** | **-84%** |
+| Combined ALB DO rows-read | 309/h | 279/h | -10% |
+| Worker invocations | 39/h | 43/h | +10% (within noise) |
+| Worker errors | 0 | 0 | flat |
+
+The two cost lines PR 1 targets both dropped sharply:
+
+- **ALB_KV writes 47/h → 0/h** — `publicRateMiddleware`'s per-IP
+  `pubrate:*` writes are gone. The genesis-status cache (the only
+  remaining KV writer) didn't fire in this window because no new
+  registrations or first-time genesis lookups happened.
+- **AgentDO rows-written 48/h → 7.6/h** — the per-request `UPDATE
+  rate_state` is gone. Residual writes are inbox + email-update
+  operations, the lower bound this surface can reach without behaviour
+  change.
+
+The combined DO rows-read drop is more modest (-10%) because most reads
+were always profile / inbox / email lookups, not rate-state. That cost
+line is what PR 2 attacks via the wake-up bit.
+
+Production smoke clean throughout the window: `/api/health`, `/api`, and
+`/api/onboarding` all return 200 with the new `X-Rate-Limit: 30` header
+sourced from the binding. No 5xx or 429 cluster.
 
 ### Rollback signal
 
