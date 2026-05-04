@@ -1,20 +1,16 @@
 import type { Context } from "hono";
 
-/** worker-logs RPC binding (service binding to arc0btc/worker-logs) */
-export interface LogsBinding {
-  log: (appId: string, entry: { level: string; message: string; context?: Record<string, unknown>; request_id?: string }) => Promise<unknown>;
-  info: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
-  warn: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
-  error: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
-  debug: (appId: string, msg: string, context?: Record<string, unknown>) => Promise<unknown>;
-}
-
 /** Cloudflare Worker environment bindings */
 export interface Env {
   ALB_KV: KVNamespace;
   AGENT_DO: DurableObjectNamespace;
   GLOBAL_DO: DurableObjectNamespace;
-  LOGS?: LogsBinding;
+  /** Rate-limit bindings (Cloudflare `ratelimits` API). Optional so dev/test
+   * can run without them; `tieredRateLimitMiddleware` fails closed if the
+   * authenticated bindings go missing in production. */
+  RL_PUBLIC?: RateLimit;
+  RL_REGISTERED?: RateLimit;
+  RL_GENESIS?: RateLimit;
   ADMIN_API_KEY?: string;
   /** x402 relay URL (defaults to mainnet relay) */
   X402_RELAY_URL?: string;
@@ -33,8 +29,9 @@ export interface AppVariables {
   x402Payer?: string;
   /** Set by x402 middleware when payment txid is available */
   x402Txid?: string;
-  /** Set by meteringMiddleware so /api/me/usage can avoid a second DO round-trip */
-  rateResult?: RateCheckResult;
+  /** Set by tieredRateLimitMiddleware so /api/me/usage can report the tier
+   * without re-resolving it. */
+  rateTier?: Tier;
 }
 
 /** Typed Hono context */
@@ -64,27 +61,6 @@ export interface AibtcAgentRecord {
 
 /** Tier label derived from agent level. L1 → "registered", L2 → "genesis". */
 export type Tier = "registered" | "genesis";
-
-/** Read-only rate snapshot returned by AgentDO and surfaced via /api/me/usage. */
-export interface RateSnapshot {
-  tier: Tier;
-  ratePerMinute: number;
-  requestsInWindow: number;
-  resetAt: number;          // ms epoch of window end
-  creditBalance: number;     // 1 sat = 1 credit, never expires
-}
-
-/** Result of an atomic rate check + increment on AgentDO. */
-export interface RateCheckResult extends RateSnapshot {
-  allowed: boolean;
-  paid: boolean;             // true when the request was funded by a credit instead of free quota
-}
-
-/** Per-IP rate state for public no-auth routes, stored in KV. */
-export interface PublicRateState {
-  windowStartedAt: number;
-  requestsInWindow: number;
-}
 
 /** Cached genesis status in KV */
 export interface GenesisCache {
@@ -158,7 +134,6 @@ export interface RegistrationData {
     rate_limit: {
       max_requests_per_minute: number;
     };
-    credit_balance: number;
   };
   next_steps: {
     check_profile: string;

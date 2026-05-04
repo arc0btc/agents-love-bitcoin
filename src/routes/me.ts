@@ -1,27 +1,23 @@
 /**
  * Authenticated /api/me/* routes — agent's own profile, email, and usage.
  *
- * All routes require BTC auth. Inbox/profile/email actions go through the
- * per-tier rate gate; /me/usage peeks at the rate state without incrementing
- * so an agent at the ceiling can still inspect when its window resets.
+ * All routes require BTC auth and pass through the per-tier rate-limit gate.
+ * `/api/me/usage` is a status surface that reports the agent's tier and the
+ * configured per-minute ceiling; per-request remaining counts are no longer
+ * tracked locally now that enforcement lives in the Cloudflare `ratelimits`
+ * binding.
  */
 
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
-import { meteringMiddleware, peekMeteringMiddleware } from "../middleware/metering";
+import { tieredRateLimitMiddleware } from "../middleware/rate-limit";
 import { okResponse, errorResponse } from "../lib/helpers";
+import { RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables } from "../lib/types";
 
 const me = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-me.use("/me/*", btcAuthMiddleware, async (c, next) => {
-  // Usage is a read-only status endpoint — peek the rate state without incrementing
-  // so agents at the ceiling can still inspect their quota.
-  if (c.req.path === "/api/me/usage") {
-    return peekMeteringMiddleware(c, next);
-  }
-  return meteringMiddleware(c, next);
-});
+me.use("/me/*", btcAuthMiddleware, tieredRateLimitMiddleware);
 
 /** GET /api/me/profile — Agent's own profile. */
 me.get("/me/profile", async (c) => {
@@ -174,23 +170,20 @@ me.put("/me/email", async (c) => {
 });
 
 /**
- * GET /api/me/usage — Current per-minute rate window + credit balance.
+ * GET /api/me/usage — Current tier + configured per-minute ceiling.
  *
- * Status endpoint: peekMeteringMiddleware reads the rate state without
- * incrementing the window, so this call is safe to poll from agents that are
- * already at their ceiling.
+ * Counters live inside the Cloudflare `ratelimits` binding, which doesn't
+ * expose remaining counts. We surface what we can: the agent's tier and the
+ * documented ceiling. Agents budget themselves locally; the binding enforces.
  */
 me.get("/me/usage", (c) => {
-  const r = c.get("rateResult");
-  if (!r) {
+  const tier = c.get("rateTier");
+  if (!tier) {
     return errorResponse(c, "INTERNAL_ERROR", "Rate state unavailable", 500);
   }
   return okResponse(c, {
-    tier: r.tier,
-    ratePerMinute: r.ratePerMinute,
-    requestsInWindow: r.requestsInWindow,
-    resetAt: new Date(r.resetAt).toISOString(),
-    creditBalance: r.creditBalance,
+    tier,
+    ratePerMinute: RATE_LIMITS[tier],
   });
 });
 

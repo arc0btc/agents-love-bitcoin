@@ -57,15 +57,6 @@ CREATE TABLE IF NOT EXISTS account_stats (
   updated_at     TEXT NOT NULL
 );
 
--- Per-minute rate state. Single row identified by id=1.
--- credit_balance: 1 sat = 1 credit; never expires.
-CREATE TABLE IF NOT EXISTS rate_state (
-  id                    INTEGER PRIMARY KEY CHECK (id = 1),
-  window_started_at_ms  INTEGER NOT NULL,
-  requests_in_window    INTEGER NOT NULL DEFAULT 0,
-  credit_balance        INTEGER NOT NULL DEFAULT 0
-);
-
 CREATE INDEX IF NOT EXISTS idx_checkins_created ON checkins(created_at);
 CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox(received_at);
 CREATE INDEX IF NOT EXISTS idx_api_usage_endpoint ON api_usage(endpoint);

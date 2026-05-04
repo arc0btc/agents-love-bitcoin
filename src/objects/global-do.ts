@@ -4,7 +4,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { GLOBAL_DO_SCHEMA } from "./schema";
-import type { Env } from "../lib/types";
+import type { Env, Tier } from "../lib/types";
+import { tierFromLevel } from "../lib/helpers";
 import { emailLocalToEmail } from "../lib/names";
 
 export class GlobalDO extends DurableObject<Env> {
@@ -87,6 +88,22 @@ export class GlobalDO extends DurableObject<Env> {
   }
 
   /**
+   * Resolve an agent's rate-limit tier from the directory index.
+   * Cheap point lookup against the existing `agent_index` primary key.
+   * Unknown addresses fall back to "registered" so rate-limit middleware
+   * still applies a default cap rather than failing closed.
+   */
+  async getAgentTier(btcAddress: string): Promise<Tier> {
+    this.ensureSchema();
+    const rows = this.ctx.storage.sql.exec(
+      `SELECT level FROM agent_index WHERE btc_address = ?`,
+      btcAddress
+    ).toArray() as unknown as Array<{ level: number }>;
+    if (rows.length === 0) return "registered";
+    return tierFromLevel(rows[0].level);
+  }
+
+  /**
    * Resolve an inbound email's local part to a BTC address (for routing).
    * `localPart` is the lowercased slug form delivered by Cloudflare Email
    * Routing (e.g. `steel-yeti`), not the display name (e.g. `Steel Yeti`).
@@ -123,6 +140,12 @@ export class GlobalDO extends DurableObject<Env> {
       const exclude = url.searchParams.get("exclude") ?? "";
       const taken = await this.isEmailLocalPartTaken(local, exclude);
       return Response.json({ taken });
+    }
+
+    if (url.pathname.startsWith("/agent-tier/") && request.method === "GET") {
+      const btcAddress = decodeURIComponent(url.pathname.split("/agent-tier/")[1]);
+      const tier = await this.getAgentTier(btcAddress);
+      return Response.json({ tier });
     }
 
     if (url.pathname.startsWith("/resolve-email-local/") && request.method === "GET") {

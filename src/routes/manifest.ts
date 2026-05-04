@@ -7,12 +7,12 @@ import { Hono } from "hono";
 import { VERSION } from "../version";
 import { okResponse } from "../lib/helpers";
 import { RATE_LIMITS } from "../lib/constants";
-import { publicRateMiddleware } from "../middleware/metering";
+import { publicRateLimitMiddleware } from "../middleware/rate-limit";
 import type { Env, AppVariables } from "../lib/types";
 
 const manifest = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-manifest.use("*", publicRateMiddleware);
+manifest.use("*", publicRateLimitMiddleware);
 
 manifest.get("/", (c) => {
   return okResponse(c, {
@@ -37,7 +37,7 @@ manifest.get("/", (c) => {
         "PUT /api/me/email": "Update forwarding address",
         "GET /api/me/email/inbox": "List inbox messages",
         "GET /api/me/email/inbox/:id": "Read a single inbox message",
-        "GET /api/me/usage": "Current per-minute rate window + credit balance",
+        "GET /api/me/usage": "Current tier and configured per-minute ceiling",
       },
       payment: {
         "POST /api/me/topup": "Submit signed sBTC tx for burst credits (PR2)",

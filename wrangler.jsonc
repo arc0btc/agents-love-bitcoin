@@ -15,12 +15,18 @@
     "ENVIRONMENT": "production"
   },
 
-  // Worker-logs RPC binding — structured logging via arc0btc/worker-logs
-  "services": [
-    { "binding": "LOGS", "service": "worker-logs", "entrypoint": "LogsRPC" }
+  // Cloudflare-managed rate limiting. Per-minute caps live alongside the
+  // documented tier ceilings in `src/lib/constants.ts:RATE_LIMITS`; keep the
+  // `simple.limit` values in sync when adjusting tiers.
+  "ratelimits": [
+    { "name": "RL_PUBLIC",     "namespace_id": "2026050401", "simple": { "limit": 30,  "period": 60 } },
+    { "name": "RL_REGISTERED", "namespace_id": "2026050402", "simple": { "limit": 30,  "period": 60 } },
+    { "name": "RL_GENESIS",    "namespace_id": "2026050403", "simple": { "limit": 120, "period": 60 } }
   ],
 
-  // KV namespace — rate limiting, caching, genesis checks
+  // KV namespace — caching, genesis-status memoization. Per-request rate-limit
+  // writes were removed in the 2026-05 cost-cleanup campaign; see
+  // `docs/cloudflare-cost-cleanup-plan-2026-05.md`.
   "kv_namespaces": [
     { "binding": "ALB_KV", "id": "a66764f222074c4192d0d4a69a90063f" }
   ],
