@@ -70,8 +70,6 @@ CREATE TABLE IF NOT EXISTS agent_index (
   aibtc_name     TEXT,
   display_name   TEXT,
   level          INTEGER NOT NULL DEFAULT 2,
-  mcp_verified   INTEGER DEFAULT 0,
-  last_active_at TEXT,
   indexed_at     TEXT NOT NULL
 );
 

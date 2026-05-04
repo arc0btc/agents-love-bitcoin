@@ -104,28 +104,6 @@ export class GlobalDO extends DurableObject<Env> {
   }
 
   /**
-   * Refresh `agent_index.last_active_at` for liveness signaling. Coalesces
-   * writes — only updates when the existing timestamp is older than the
-   * caller's threshold (default 60s) so high-frequency callers don't fan out
-   * one DO write per request. The runtime cadence (~600s) leaves this firing
-   * at most once per agent per 60s window.
-   */
-  async touchActive(btcAddress: string, thresholdSeconds = 60): Promise<void> {
-    this.ensureSchema();
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - thresholdSeconds * 1000).toISOString();
-    this.ctx.storage.sql.exec(
-      `UPDATE agent_index
-       SET last_active_at = ?
-       WHERE btc_address = ?
-         AND (last_active_at IS NULL OR last_active_at < ?)`,
-      now.toISOString(),
-      btcAddress,
-      cutoff
-    );
-  }
-
-  /**
    * Resolve an inbound email's local part to a BTC address (for routing).
    * `localPart` is the lowercased slug form delivered by Cloudflare Email
    * Routing (e.g. `steel-yeti`), not the display name (e.g. `Steel Yeti`).
@@ -168,12 +146,6 @@ export class GlobalDO extends DurableObject<Env> {
       const btcAddress = decodeURIComponent(url.pathname.split("/agent-tier/")[1]);
       const tier = await this.getAgentTier(btcAddress);
       return Response.json({ tier });
-    }
-
-    if (url.pathname.startsWith("/touch-active/") && request.method === "POST") {
-      const btcAddress = decodeURIComponent(url.pathname.split("/touch-active/")[1]);
-      await this.touchActive(btcAddress);
-      return Response.json({ ok: true });
     }
 
     if (url.pathname.startsWith("/resolve-email-local/") && request.method === "GET") {

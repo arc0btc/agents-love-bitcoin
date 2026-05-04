@@ -227,62 +227,49 @@ Pre-deploy column reuses the PR 1 post-deploy snapshot once captured.
 - Runtime poll job spikes 4xx because the new endpoint isn't authenticated
   correctly.
 
-## PR 3 — Heartbeat consolidation
+## PR 3 — Reverted
 
-**PR:** `arc0btc/agents-love-bitcoin#<pending>`
-**Branch:** `chore/cf-cost-pr3-heartbeat`
-**Plan section:** `cloudflare-cost-cleanup-plan-2026-05.md` → "PR 3".
+**Reverted:** `arc0btc/agents-love-bitcoin#19` (merged at
+`2026-05-04T18:53:25Z`, deployed `18:53:28Z`, reverted same day).
+**Plan section reference:** the original "PR 3" scope in
+`cloudflare-cost-cleanup-plan-2026-05.md` was wrong on two counts.
 
-### Scope
+The original PR 3 added a coalesced `last_active_at` write on
+`agent_index` from `/api/me/inbox-status` and a paired runtime PR to
+stretch the `aibtc-checkin` schedule. Both were deleted because:
 
-- Add `GlobalDO.touchActive(btcAddress, thresholdSeconds = 60)` — coalesced
-  UPDATE against `agent_index.last_active_at`. The `WHERE last_active_at IS
-  NULL OR last_active_at < ?` clause keeps high-frequency callers from
-  fanning out one DO write per request; the runtime cadence (~600s)
-  triggers an actual write at most once per agent per 60s window.
-- Add `POST /touch-active/:btc` HTTP handler so the worker can fire the
-  refresh from the request path.
-- `GET /api/me/inbox-status` now fires `globalDo.fetch('/touch-active/...')`
-  as fire-and-forget through `c.executionCtx.waitUntil`. The explicit
-  heartbeat task on the runtime side becomes redundant — inbox-status
-  polls keep the liveness signal warm.
-- Paired runtime PR (`aibtcdev/agent-runtime`) drops or stretches the
-  `aibtc-checkin` schedule. ALB-side change is safe to land first; the
-  runtime keeps checking in until its config catches up.
+- **`agent_index.last_active_at` was unused.** Nothing in ALB ever read
+  it. The "refresh it from inbox-status so the heartbeat can stop" plan
+  didn't replace anything — it added a per-poll GlobalDO write for a
+  column that has no consumer. Pure write amplification.
+- **`aibtc-checkin` is an aibtc.com call.** The runtime task execs an
+  externally-installed `/home/dev/.local/bin/aibtc-heartbeat` CLI that
+  hits aibtc.com, not ALB. Stretching its cadence reduces aibtc.com
+  Workers cost; ALB doesn't see those requests at all. So the campaign's
+  "ALB-side last_active_at refresh" was conceptually paired with a
+  separate-service cost line.
 
-### Expected Cloudflare movement
+The revert drops:
 
-The PR 1 heartbeat stretch logic was deferred to here so PR 2's metric
-attribution stays clean. On its own, the ALB-side change adds at most 1
-GlobalDO write per agent per 60s window. With 5 active agents on 600s
-poll cadence, that's at most 5 writes/min ≈ 7K/day worst case, but
-realistic load is closer to 1 write/agent/poll = ~720/day total — bounded
-by the polling cadence. The bigger movement comes from the paired runtime
-PR which drops the dedicated heartbeat task entirely; that cuts Workers
-request count and AgentDO/GlobalDO invocations by the heartbeat share.
+- `GlobalDO.touchActive` and `/touch-active/:btc` HTTP handler.
+- The `waitUntil` fire on `/api/me/inbox-status`.
+- The `last_active_at` and `mcp_verified` columns from the
+  `agent_index` schema (both unused: `last_active_at` was only ever
+  written by the reverted PR; `mcp_verified` was never written by
+  `indexAgent` and never read).
 
-### Done criteria
+ALB stays a simple receive-only inbox. Heartbeat / liveness lives on
+aibtc.com, where it belongs. If aibtc.com itself wants to stretch the
+`aibtc-checkin` cadence, that's an aibtc.com cost-cleanup track, not
+this campaign's PR 3.
 
-- `aibtc-checkin` task volume on the runtime fleet drops to near-zero (or
-  ~1/h with stretch) over the 2h verification window.
-- `last_active_at` recency for each active agent stays within 1h of
-  `now()` — runtime poll cadence at 600s keeps this comfortable.
-- No operator alarm on agent liveness; no 5xx cluster in production.
+### Campaign scope after the revert
 
-### Post-deploy actuals
+| PR | Status | Headline movement |
+|---|---|---|
+| PR 1 — `ratelimits` binding | ✅ merged + verified | `ALB_KV` writes 47/h → 0/h, AgentDO rows-written 48/h → 7.6/h |
+| PR 2 — `unread_count` + `/api/me/inbox-status` | ✅ merged, 2h verification pending | Inbox-scan cost on idle polls dropped from full table scan to 1-row stat lookup |
+| PR 3 — heartbeat consolidation | ❌ scoped wrong, reverted | n/a |
 
-| Metric (rate/h) | Pre-deploy (post-PR2) | Post-deploy | Change |
-|---|---:|---:|---:|
-| `aibtc-checkin` task volume | TBD | TBD | TBD |
-| GlobalDO rows-written | TBD | TBD | TBD |
-| AgentDO rows-read | TBD | TBD | TBD |
-| Worker invocations | TBD | TBD | TBD |
-
-### Rollback signal
-
-- Sustained 5xx on `/api/me/inbox-status` post-deploy. The
-  fire-and-forget `touchActive` failure shouldn't surface, but a
-  GlobalDO outage could still cascade if the `c.executionCtx.waitUntil`
-  promise resolution somehow blocks the response — verify it doesn't.
-- `last_active_at` timestamps for active agents falling more than 1h
-  behind `now()` over 2h+ — would indicate the touch path isn't firing.
+Campaign closes after PR 2's 2h verification window confirms the inbox
+stats path holds.
