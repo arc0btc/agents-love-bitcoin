@@ -25,6 +25,6 @@
     "@types/bun": "^1.3.13",
     "@types/node": "^25.5.0",
     "typescript": "^5.7.0",
-    "wrangler": "^3.100.0"
+    "wrangler": "^4.75.0"
   }
 }

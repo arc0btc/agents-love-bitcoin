@@ -11,12 +11,12 @@
 import { Hono } from "hono";
 import { VERSION } from "../version";
 import { RATE_LIMITS } from "../lib/constants";
-import { publicRateMiddleware } from "./../middleware/metering";
+import { publicRateLimitMiddleware } from "./../middleware/rate-limit";
 import type { Env, AppVariables } from "../lib/types";
 
 const llms = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-llms.use("*", publicRateMiddleware);
+llms.use("*", publicRateLimitMiddleware);
 
 llms.get("/llms.txt", (c) => {
   c.header("Content-Type", "text/plain; charset=utf-8");
@@ -41,7 +41,7 @@ Authentication is dual-signature against your aibtc.com identity: BIP-137/322 (B
 - **Registered** (Verified Agent, L1 on aibtc.com): ${RATE_LIMITS.registered}/min.
 - **Genesis** (L2 on aibtc.com): ${RATE_LIMITS.genesis}/min.
 
-Rate limits are per-minute, evaluated against the AgentDO. Headers \`X-Rate-Limit\`, \`X-Rate-Remaining\`, \`X-Rate-Reset\` (seconds-until-reset) accompany every authenticated response. On 429, the body carries a forward-compat \`payment\` hint pointing at the top-up endpoint.
+Rate limits are enforced by Cloudflare's first-party \`ratelimits\` binding (per-tier, per-minute). Authenticated responses include an \`X-Rate-Limit\` header advertising the configured ceiling. On 429, responses include \`Retry-After: 60\`.
 
 ## Register
 
@@ -74,7 +74,7 @@ curl -X POST https://agentslovebitcoin.com/api/register \\
   -H "X-STX-Signature: <hex SIP-018>"
 \`\`\`
 
-Response includes your provisioned email address, your tier (\`registered\` or \`genesis\`, derived from your aibtc.com level), per-minute rate ceiling, and a starting \`credit_balance\` of 0.
+Response includes your provisioned email address, your tier (\`registered\` or \`genesis\`, derived from your aibtc.com level), and your per-minute rate ceiling.
 
 **ADDRESS_MISMATCH 403:** the BTC↔STX pair on aibtc.com doesn't match the headers you signed. Update your aibtc.com profile, or sign with the keys for the registered pair.
 
@@ -87,44 +87,18 @@ All endpoints below require the standard BIP-137/322 auth headers. Message forma
 - \`PUT  /api/me/email\` — update forwarding (\`{ "forward_to": "you@example.com" }\` or \`null\`).
 - \`GET  /api/me/email/inbox?limit=20&offset=0\` — list messages, newest first.
 - \`GET  /api/me/email/inbox/{id}\` — read one (marks as read).
-- \`GET  /api/me/usage\` — rate window + credit balance:
+- \`GET  /api/me/usage\` — current tier + configured per-minute ceiling:
 
 \`\`\`
 {
   "tier": "genesis",
-  "ratePerMinute": ${RATE_LIMITS.genesis},
-  "requestsInWindow": 7,
-  "resetAt": "2026-04-29T12:00:00.000Z",
-  "creditBalance": 0
+  "ratePerMinute": ${RATE_LIMITS.genesis}
 }
 \`\`\`
 
-## Top-up (PR2 — endpoints land separately)
+## Top-up (forward-looking)
 
-When the per-minute window is exhausted, callers receive a 429 with this hint:
-
-\`\`\`
-{
-  "ok": false,
-  "error": { "code": "RATE_LIMITED", "message": "..." },
-  "payment": { "amountSats": 100, "perCredits": 100, "endpoint": "/api/me/topup" }
-}
-\`\`\`
-
-Once shipped, \`POST /api/me/topup\` will accept a signed sBTC transaction:
-
-\`\`\`
-{
-  "method": "sbtc-x402",
-  "txHex": "<signed transaction>"
-}
-\`\`\`
-
-The endpoint will return \`{ paymentId, status: "pending" }\`; poll \`GET /api/payment-status/{paymentId}\` until \`confirmed\`. On confirm, \`creditBalance\` is incremented by 100 (1 sat = 1 credit) and credits never expire.
-
-Credits do **not** count against the per-minute window — paid requests bypass the cap entirely. The relay enforces an upstream ceiling, so there's no need for ALB to impose an arbitrary one for paid usage.
-
-The payment-method discriminator is open-ended: a future ecosystem-credit unit can add an adapter without touching the credit-balance accounting.
+When the per-minute window is exhausted, callers receive a 429 with \`Retry-After: 60\`. A future paid-burst flow may add a top-up surface keyed on x402 receipt rows; design notes live in the campaign plan referenced from \`/api\`.
 
 ## Tips
 
@@ -157,10 +131,10 @@ The payment-method discriminator is open-ended: a future ecosystem-credit unit c
 - \`GET /api/me/email/inbox/{id}\`
 - \`GET /api/me/usage\`
 
-### Payment (PR2)
+### Payment (forward-looking)
 
-- \`POST /api/me/topup\`
-- \`GET /api/payment-status/{paymentId}\`
+- \`POST /api/me/topup\` (not yet shipped)
+- \`GET /api/payment-status/{paymentId}\` (not yet shipped)
 
 ---
 

@@ -2,3 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+
+# Per-PR baselines, inventories, and smoke captures referenced by
+# docs/cloudflare-cost-cleanup-plan-2026-05.md. Local-only.
+.planning/

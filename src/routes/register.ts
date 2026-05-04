@@ -272,7 +272,6 @@ function buildApiAccess(level: number): RegistrationData["api_access"] {
     rate_limit: {
       max_requests_per_minute: RATE_LIMITS[tier],
     },
-    credit_balance: 0,
   };
 }
 

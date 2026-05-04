@@ -16,7 +16,12 @@ export const SIP018_DOMAIN = {
 
 import type { Tier } from "./types";
 
-/** Per-minute rate ceilings per tier. Public applies to no-auth endpoints. */
+/**
+ * Documented per-minute rate ceilings per tier. Enforcement happens through
+ * the Cloudflare `ratelimits` bindings declared in `wrangler.jsonc`; keep the
+ * `simple.limit` values there in sync with these numbers when adjusting tiers.
+ * Public applies to no-auth endpoints (manifest / llms / onboarding).
+ */
 export const RATE_LIMITS = {
   public: 30,
   registered: 30,
@@ -61,9 +66,6 @@ export const X402_HEADERS = {
   PAYMENT_SIGNATURE: "X-Payment-Signature",
   PAYMENT_RESPONSE: "X-Payment-Response",
 } as const;
-
-/** Per-minute rate window duration (ms) */
-export const RATE_WINDOW_MS = 60_000;
 
 /** Relay settle timeout (ms) */
 export const RELAY_SETTLE_TIMEOUT_MS = 65_000;

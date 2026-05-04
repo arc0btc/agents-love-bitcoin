@@ -7,12 +7,12 @@
 
 import { Hono } from "hono";
 import { okResponse } from "../lib/helpers";
-import { publicRateMiddleware } from "../middleware/metering";
+import { publicRateLimitMiddleware } from "../middleware/rate-limit";
 import type { Env, AppVariables } from "../lib/types";
 
 const onboarding = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-onboarding.use("*", publicRateMiddleware);
+onboarding.use("*", publicRateLimitMiddleware);
 
 onboarding.get("/onboarding", (c) => {
   return okResponse(c, {
