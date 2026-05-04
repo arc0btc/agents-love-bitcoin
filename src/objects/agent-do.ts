@@ -41,11 +41,52 @@ interface InboxRow {
 
 export class AgentDO extends DurableObject<Env> {
   private initialized = false;
+  private inboxStatsInitialized = false;
 
   private ensureSchema(): void {
     if (this.initialized) return;
     this.ctx.storage.sql.exec(AGENT_DO_SCHEMA);
     this.initialized = true;
+  }
+
+  /**
+   * One-time backfill for agents that registered before the unread_count /
+   * total_emails_received stats were maintained explicitly. Idempotent and
+   * isolate-scoped — runs once per DO lifetime, not per request.
+   */
+  private ensureInboxStats(): void {
+    if (this.inboxStatsInitialized) return;
+    this.ensureSchema();
+    const now = new Date().toISOString();
+
+    const existing = this.ctx.storage.sql.exec(
+      `SELECT stat_key FROM account_stats WHERE stat_key IN ('unread_count','total_emails_received')`
+    ).toArray() as unknown as Array<{ stat_key: string }>;
+    const present = new Set(existing.map((r) => r.stat_key));
+
+    if (!present.has("total_emails_received")) {
+      const totalRow = this.ctx.storage.sql.exec(
+        `SELECT COUNT(*) AS cnt FROM inbox`
+      ).one() as unknown as { cnt: number };
+      this.ctx.storage.sql.exec(
+        `INSERT INTO account_stats (stat_key, stat_value, updated_at) VALUES ('total_emails_received', ?, ?)`,
+        totalRow.cnt,
+        now
+      );
+    }
+
+    if (!present.has("unread_count")) {
+      const unreadRow = this.ctx.storage.sql.exec(
+        `SELECT COUNT(*) AS cnt FROM inbox WHERE read_at IS NULL`
+      ).one() as unknown as { cnt: number };
+      this.ctx.storage.sql.exec(
+        `INSERT INTO account_stats (stat_key, stat_value, updated_at) VALUES ('unread_count', ?, ?)`,
+        unreadRow.cnt,
+        now
+      );
+    }
+
+    this.inboxStatsInitialized = true;
   }
 
   /** Create the agent profile and email on registration. */
@@ -84,14 +125,24 @@ export class AgentDO extends DurableObject<Env> {
       now
     );
 
-    // Initialize account stats
-    for (const key of ["total_checkins", "total_signals", "total_emails_sent", "total_api_calls"]) {
+    // Initialize account stats. `unread_count` and `total_emails_received` are
+    // maintained explicitly so /api/me/inbox-status can answer without scanning
+    // the inbox table.
+    for (const key of [
+      "total_checkins",
+      "total_signals",
+      "total_emails_sent",
+      "total_api_calls",
+      "total_emails_received",
+      "unread_count",
+    ]) {
       this.ctx.storage.sql.exec(
         `INSERT INTO account_stats (stat_key, stat_value, updated_at) VALUES (?, 0, ?)`,
         key,
         now
       );
     }
+    this.inboxStatsInitialized = true;
 
     const profile = this.ctx.storage.sql.exec(
       `SELECT * FROM profile WHERE btc_address = ?`,
@@ -141,7 +192,7 @@ export class AgentDO extends DurableObject<Env> {
     bodyText: string | null;
     bodyHtml: string | null;
   }): Promise<InboxRow> {
-    this.ensureSchema();
+    this.ensureInboxStats();
     const now = new Date().toISOString();
 
     this.ctx.storage.sql.exec(
@@ -155,11 +206,10 @@ export class AgentDO extends DurableObject<Env> {
       now
     );
 
-    // Increment total_emails_received stat
+    // Increment total_emails_received + unread_count stats. Both are seeded by
+    // ensureInboxStats above (or `register`), so the simple UPDATE is safe.
     this.ctx.storage.sql.exec(
-      `INSERT INTO account_stats (stat_key, stat_value, updated_at) VALUES ('total_emails_received', 1, ?)
-       ON CONFLICT(stat_key) DO UPDATE SET stat_value = stat_value + 1, updated_at = ?`,
-      now,
+      `UPDATE account_stats SET stat_value = stat_value + 1, updated_at = ? WHERE stat_key IN ('total_emails_received','unread_count')`,
       now
     );
 
@@ -171,10 +221,12 @@ export class AgentDO extends DurableObject<Env> {
 
   /** List inbox messages (newest first, paginated). */
   async listInbox(limit: number, offset: number): Promise<{ messages: InboxRow[]; total: number }> {
-    this.ensureSchema();
+    this.ensureInboxStats();
 
-    const countRow = this.ctx.storage.sql.exec(
-      `SELECT COUNT(*) as cnt FROM inbox`
+    // Inbox is append-only — `total_emails_received` is exactly the row count
+    // and avoids a per-call full-table scan.
+    const totalRow = this.ctx.storage.sql.exec(
+      `SELECT stat_value AS cnt FROM account_stats WHERE stat_key = 'total_emails_received'`
     ).one() as unknown as { cnt: number };
 
     const rows = this.ctx.storage.sql.exec(
@@ -183,12 +235,29 @@ export class AgentDO extends DurableObject<Env> {
       offset
     ).toArray() as unknown as InboxRow[];
 
-    return { messages: rows, total: countRow.cnt };
+    return { messages: rows, total: totalRow.cnt };
+  }
+
+  /**
+   * Wake-up bit for runtime polls: total + unread counts read straight from
+   * `account_stats`, no inbox-table touch. The runtime calls this first and
+   * skips the full inbox fetch when `unread === 0`.
+   */
+  async getInboxStatus(): Promise<{ unread: number; total: number }> {
+    this.ensureInboxStats();
+    const rows = this.ctx.storage.sql.exec(
+      `SELECT stat_key, stat_value FROM account_stats WHERE stat_key IN ('unread_count','total_emails_received')`
+    ).toArray() as unknown as Array<{ stat_key: string; stat_value: number }>;
+    const map = Object.fromEntries(rows.map((r) => [r.stat_key, r.stat_value]));
+    return {
+      unread: map.unread_count ?? 0,
+      total: map.total_emails_received ?? 0,
+    };
   }
 
   /** Get a single inbox message and mark it as read. */
   async getInboxMessage(messageId: string): Promise<InboxRow | null> {
-    this.ensureSchema();
+    this.ensureInboxStats();
 
     const rows = this.ctx.storage.sql.exec(
       `SELECT * FROM inbox WHERE id = ?`,
@@ -202,6 +271,12 @@ export class AgentDO extends DurableObject<Env> {
         `UPDATE inbox SET read_at = ? WHERE id = ?`,
         now,
         messageId
+      );
+      // Decrement unread_count on the unread → read transition. Clamp at 0
+      // defensively in case a backfill underestimated.
+      this.ctx.storage.sql.exec(
+        `UPDATE account_stats SET stat_value = MAX(stat_value - 1, 0), updated_at = ? WHERE stat_key = 'unread_count'`,
+        now
       );
       row.read_at = now;
     }
@@ -265,6 +340,11 @@ export class AgentDO extends DurableObject<Env> {
         Math.max(offset, 0)
       );
       return Response.json(result);
+    }
+
+    if (url.pathname === "/inbox-status" && request.method === "GET") {
+      const status = await this.getInboxStatus();
+      return Response.json(status);
     }
 
     if (url.pathname.startsWith("/inbox/") && request.method === "GET") {

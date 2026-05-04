@@ -67,21 +67,57 @@ Per-PR baselines, inventories, and smoke captures live under `.planning/`
 - **Cost signal:** rerun the same four GraphQL queries against the 24h post
   deploy window. Fill in the actuals table below.
 
-### Post-deploy actuals
+### Post-deploy actuals (accelerated 2h verification)
 
-Pre-deploy column captured `2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z`.
-Cloudflare's DO metrics return one namespace per script regardless of how
-many DO classes are declared, so `AgentDO` + `GlobalDO` totals collapse into
-one `ALB DO` line.
+Per-PR verification ran at 2h instead of 24h to keep the campaign moving;
+the long tail confirmation falls out of the next PR's pre-deploy capture.
 
-| Metric | Pre-deploy 24h total | Pre-deploy rate/h | Post-deploy 24h total | Post-deploy rate/h | Change |
-|---|---:|---:|---:|---:|---:|
-| `ALB_KV` writes | 1,119 | 47/h | TBD | TBD | TBD |
-| `ALB_KV` reads | 1,723 | 72/h | TBD | TBD | TBD |
-| ALB DO rows-written | 1,150 | 48/h | TBD | TBD | TBD |
-| ALB DO rows-read | 7,427 | 309/h | TBD | TBD | TBD |
-| ALB DO invocations | 1,385 | 58/h | TBD | TBD | TBD |
-| Worker invocations | 927 | 39/h | TBD | TBD | TBD |
+| Window | Span |
+|---|---|
+| Pre-deploy | `2026-05-03T16:28:51Z → 2026-05-04T16:27:51Z` (24h) |
+| Post-deploy | `2026-05-04T16:37:00Z → 2026-05-04T18:43:24Z` (2h 6min) |
+
+Cloudflare's DO metrics return one namespace per (script, class). The
+deploy of PR 1 lit up `GlobalDO` as a separately-tracked namespace
+(`2ce99806ef464eadb5794a4942277616`) since the new middleware reads
+`agent_index` for tier resolution. AgentDO stays on the original
+namespace (`79e44de26ac8464787e3fb0b3a06f92f`). Post-deploy rates are
+combined unless noted.
+
+| Metric | Pre-deploy rate/h | Post-deploy rate/h | Change |
+|---|---:|---:|---:|
+| `ALB_KV` writes | 47/h | **0/h** | **-100%** |
+| `ALB_KV` reads | 72/h | 0/h | — (no genesis cache hits in window) |
+| `ALB_KV` deletes | 0/h | 0/h | flat |
+| AgentDO rows-written | 48/h | **7.6/h** | **-84%** |
+| AgentDO rows-read | 309/h | 243/h | -21% |
+| AgentDO invocations | 58/h | 38/h | -34% |
+| GlobalDO rows-written | n/a | 0/h | new namespace |
+| GlobalDO rows-read | n/a | 36/h | new namespace |
+| GlobalDO invocations | n/a | 26/h | new namespace |
+| Combined ALB DO rows-written | 48/h | **7.6/h** | **-84%** |
+| Combined ALB DO rows-read | 309/h | 279/h | -10% |
+| Worker invocations | 39/h | 43/h | +10% (within noise) |
+| Worker errors | 0 | 0 | flat |
+
+The two cost lines PR 1 targets both dropped sharply:
+
+- **ALB_KV writes 47/h → 0/h** — `publicRateMiddleware`'s per-IP
+  `pubrate:*` writes are gone. The genesis-status cache (the only
+  remaining KV writer) didn't fire in this window because no new
+  registrations or first-time genesis lookups happened.
+- **AgentDO rows-written 48/h → 7.6/h** — the per-request `UPDATE
+  rate_state` is gone. Residual writes are inbox + email-update
+  operations, the lower bound this surface can reach without behaviour
+  change.
+
+The combined DO rows-read drop is more modest (-10%) because most reads
+were always profile / inbox / email lookups, not rate-state. That cost
+line is what PR 2 attacks via the wake-up bit.
+
+Production smoke clean throughout the window: `/api/health`, `/api`, and
+`/api/onboarding` all return 200 with the new `X-Rate-Limit: 30` header
+sourced from the binding. No 5xx or 429 cluster.
 
 ### Rollback signal
 
@@ -117,7 +153,79 @@ curl -s https://agentslovebitcoin.com/api/me/usage \
 
 ## PR 2 — `unread_count` + `/api/me/inbox-status` endpoint
 
-Pending PR 1 merge + 24h verification. See plan section "PR 2".
+**PR:** `arc0btc/agents-love-bitcoin#<pending>`
+**Branch:** `feat/cf-cost-pr2-inbox-status`
+**Plan section:** `cloudflare-cost-cleanup-plan-2026-05.md` → "PR 2".
+
+### Scope
+
+- `AgentDO.account_stats` now maintains two new keys:
+  - `unread_count` — incremented in `receiveEmail`, decremented in
+    `getInboxMessage` on the unread → read transition (clamped at 0).
+  - `total_emails_received` — already existed implicitly; now seeded to 0 on
+    `register` so a `SELECT stat_value` answers "total inbox count" without
+    scanning the inbox table.
+- One-time `ensureInboxStats()` backfill on the first DO touch post-deploy:
+  reads `COUNT(*)` and `COUNT(*) WHERE read_at IS NULL` once if the stats
+  rows are missing, then writes the seed values. Idempotent and
+  isolate-cached.
+- New `GET /api/me/inbox-status` — single 1-row read of `account_stats`,
+  returns `{ unread, total }`. Designed as the wake-up bit for poll-driven
+  runtimes (`alb-email-poll.ts` calls this first, skips full inbox fetch
+  when `unread === 0`).
+- `listInbox` swaps `SELECT COUNT(*) FROM inbox` for the
+  `total_emails_received` lookup. Inbox is append-only so the lifetime
+  counter equals the row count.
+- Paired runtime PR (`aibtcdev/agent-runtime`) updates
+  `scripts/alb-email-poll.ts` to call `/api/me/inbox-status` first; both PR
+  numbers land in this entry.
+
+### Expected Cloudflare movement
+
+At 5 active agents on 600s polling cadence, the runtime fleet hits inbox
+endpoints ~720x/day total. Today each call scans the inbox via
+`SELECT COUNT(*)` plus the LIMIT/OFFSET fetch. With the wake-up bit:
+
+- Idle polls (the common case — most polls find no new mail) drop from a
+  full inbox scan to a single 1-row stat lookup. AgentDO `rows-read` per
+  idle poll falls from "table size" toward 1.
+- The full inbox fetch only runs on actual mail arrival. At 10K active
+  agents this is the difference between ~1.5M inbox-scan calls/day and ~50K
+  fetches/day on real arrivals.
+
+PR 1 baseline AgentDO `rows-read = 7,427 / 24h ≈ 309/h`. After PR 2 plus
+runtime cutover, expect `rows-read/h` to fall sharply — most of the
+remainder is profile + email reads, not inbox scans.
+
+### Done criteria
+
+- AgentDO `rows-read/day` drops materially across the runtime fleet over
+  a 24h window (or the accelerated 2h window agreed for this campaign).
+- Inbox correctness preserved: send a test email, confirm
+  `/api/me/inbox-status` shows `unread === 1` before read and `unread === 0`
+  after a `GET /api/me/email/inbox/{id}` round-trip.
+- `total` returned by `/api/me/email/inbox` still equals the historical
+  count for an existing agent (backfill seeds correctly).
+
+### Post-deploy actuals
+
+Pre-deploy column reuses the PR 1 post-deploy snapshot once captured.
+
+| Metric | Pre-deploy 24h total | Pre-deploy rate/h | Post-deploy total | Post-deploy rate/h | Change |
+|---|---:|---:|---:|---:|---:|
+| ALB DO rows-read | TBD | TBD | TBD | TBD | TBD |
+| ALB DO rows-written | TBD | TBD | TBD | TBD | TBD |
+| ALB DO invocations | TBD | TBD | TBD | TBD | TBD |
+
+### Rollback signal
+
+- `/api/me/inbox-status` returns wrong values (negative, larger than total,
+  diverges from `SELECT COUNT(*) WHERE read_at IS NULL` against a smoke
+  agent's DO).
+- `total` from `/api/me/email/inbox` reports a number that doesn't match
+  what the runtime saw before.
+- Runtime poll job spikes 4xx because the new endpoint isn't authenticated
+  correctly.
 
 ## PR 3 — Heartbeat consolidation
 

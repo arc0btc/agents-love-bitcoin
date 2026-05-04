@@ -98,6 +98,26 @@ me.get("/me/email", async (c) => {
   return okResponse(c, { email });
 });
 
+/**
+ * GET /api/me/inbox-status — Wake-up bit for poll-driven runtimes.
+ *
+ * Returns `{ unread, total }` straight from AgentDO `account_stats` with no
+ * inbox-table touch. Runtimes call this before the full inbox fetch and
+ * skip the heavier query when `unread === 0`.
+ */
+me.get("/me/inbox-status", async (c) => {
+  const btcAddress = c.get("btcAddress")!;
+  const agentDoId = c.env.AGENT_DO.idFromName(btcAddress);
+  const agentDo = c.env.AGENT_DO.get(agentDoId);
+
+  const resp = await agentDo.fetch(new Request("http://internal/inbox-status"));
+  if (!resp.ok) {
+    return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch inbox status", 500);
+  }
+  const status = await resp.json() as { unread: number; total: number };
+  return okResponse(c, status);
+});
+
 /** GET /api/me/email/inbox — List inbox messages (paginated). */
 me.get("/me/email/inbox", async (c) => {
   const btcAddress = c.get("btcAddress")!;
