@@ -104,6 +104,11 @@ me.get("/me/email", async (c) => {
  * Returns `{ unread, total }` straight from AgentDO `account_stats` with no
  * inbox-table touch. Runtimes call this before the full inbox fetch and
  * skip the heavier query when `unread === 0`.
+ *
+ * Fires a coalesced `last_active_at` refresh against the GlobalDO directory
+ * as fire-and-forget background work. With the explicit `aibtc-checkin`
+ * heartbeat dropped (PR 3 of the cost-cleanup campaign), the inbox-status
+ * poll cadence becomes the de facto liveness signal.
  */
 me.get("/me/inbox-status", async (c) => {
   const btcAddress = c.get("btcAddress")!;
@@ -115,6 +120,15 @@ me.get("/me/inbox-status", async (c) => {
     return errorResponse(c, "INTERNAL_ERROR", "Failed to fetch inbox status", 500);
   }
   const status = await resp.json() as { unread: number; total: number };
+
+  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
+  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
+  c.executionCtx.waitUntil(
+    globalDo.fetch(
+      new Request(`http://internal/touch-active/${encodeURIComponent(btcAddress)}`, { method: "POST" })
+    ).catch(() => {})
+  );
+
   return okResponse(c, status);
 });
 

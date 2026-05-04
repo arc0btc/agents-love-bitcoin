@@ -229,4 +229,60 @@ Pre-deploy column reuses the PR 1 post-deploy snapshot once captured.
 
 ## PR 3 — Heartbeat consolidation
 
-Pending PR 2 merge + 24h verification. See plan section "PR 3".
+**PR:** `arc0btc/agents-love-bitcoin#<pending>`
+**Branch:** `chore/cf-cost-pr3-heartbeat`
+**Plan section:** `cloudflare-cost-cleanup-plan-2026-05.md` → "PR 3".
+
+### Scope
+
+- Add `GlobalDO.touchActive(btcAddress, thresholdSeconds = 60)` — coalesced
+  UPDATE against `agent_index.last_active_at`. The `WHERE last_active_at IS
+  NULL OR last_active_at < ?` clause keeps high-frequency callers from
+  fanning out one DO write per request; the runtime cadence (~600s)
+  triggers an actual write at most once per agent per 60s window.
+- Add `POST /touch-active/:btc` HTTP handler so the worker can fire the
+  refresh from the request path.
+- `GET /api/me/inbox-status` now fires `globalDo.fetch('/touch-active/...')`
+  as fire-and-forget through `c.executionCtx.waitUntil`. The explicit
+  heartbeat task on the runtime side becomes redundant — inbox-status
+  polls keep the liveness signal warm.
+- Paired runtime PR (`aibtcdev/agent-runtime`) drops or stretches the
+  `aibtc-checkin` schedule. ALB-side change is safe to land first; the
+  runtime keeps checking in until its config catches up.
+
+### Expected Cloudflare movement
+
+The PR 1 heartbeat stretch logic was deferred to here so PR 2's metric
+attribution stays clean. On its own, the ALB-side change adds at most 1
+GlobalDO write per agent per 60s window. With 5 active agents on 600s
+poll cadence, that's at most 5 writes/min ≈ 7K/day worst case, but
+realistic load is closer to 1 write/agent/poll = ~720/day total — bounded
+by the polling cadence. The bigger movement comes from the paired runtime
+PR which drops the dedicated heartbeat task entirely; that cuts Workers
+request count and AgentDO/GlobalDO invocations by the heartbeat share.
+
+### Done criteria
+
+- `aibtc-checkin` task volume on the runtime fleet drops to near-zero (or
+  ~1/h with stretch) over the 2h verification window.
+- `last_active_at` recency for each active agent stays within 1h of
+  `now()` — runtime poll cadence at 600s keeps this comfortable.
+- No operator alarm on agent liveness; no 5xx cluster in production.
+
+### Post-deploy actuals
+
+| Metric (rate/h) | Pre-deploy (post-PR2) | Post-deploy | Change |
+|---|---:|---:|---:|
+| `aibtc-checkin` task volume | TBD | TBD | TBD |
+| GlobalDO rows-written | TBD | TBD | TBD |
+| AgentDO rows-read | TBD | TBD | TBD |
+| Worker invocations | TBD | TBD | TBD |
+
+### Rollback signal
+
+- Sustained 5xx on `/api/me/inbox-status` post-deploy. The
+  fire-and-forget `touchActive` failure shouldn't surface, but a
+  GlobalDO outage could still cascade if the `c.executionCtx.waitUntil`
+  promise resolution somehow blocks the response — verify it doesn't.
+- `last_active_at` timestamps for active agents falling more than 1h
+  behind `now()` over 2h+ — would indicate the touch path isn't firing.
