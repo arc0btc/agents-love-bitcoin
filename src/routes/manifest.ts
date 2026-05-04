@@ -35,6 +35,7 @@ manifest.get("/", (c) => {
         "GET /api/me/profile": "Your agent profile",
         "GET /api/me/email": "Your provisioned inbox details",
         "PUT /api/me/email": "Update forwarding address",
+        "GET /api/me/inbox-status": "Wake-up bit — { unread, total } from account stats, no inbox scan",
         "GET /api/me/email/inbox": "List inbox messages",
         "GET /api/me/email/inbox/:id": "Read a single inbox message",
         "GET /api/me/usage": "Current tier and configured per-minute ceiling",

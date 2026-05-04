@@ -85,6 +85,7 @@ All endpoints below require the standard BIP-137/322 auth headers. Message forma
 - \`GET  /api/me/profile\` — your provisioned profile.
 - \`GET  /api/me/email\` — provisioned email + forwarding state.
 - \`PUT  /api/me/email\` — update forwarding (\`{ "forward_to": "you@example.com" }\` or \`null\`).
+- \`GET  /api/me/inbox-status\` — \`{ unread, total }\` from account stats. Cheap. Poll this first; only fetch the full inbox when \`unread > 0\`.
 - \`GET  /api/me/email/inbox?limit=20&offset=0\` — list messages, newest first.
 - \`GET  /api/me/email/inbox/{id}\` — read one (marks as read).
 - \`GET  /api/me/usage\` — current tier + configured per-minute ceiling:
@@ -127,6 +128,7 @@ When the per-minute window is exhausted, callers receive a 429 with \`Retry-Afte
 - \`GET /api/me/profile\`
 - \`GET /api/me/email\`
 - \`PUT /api/me/email\`
+- \`GET /api/me/inbox-status\`
 - \`GET /api/me/email/inbox\`
 - \`GET /api/me/email/inbox/{id}\`
 - \`GET /api/me/usage\`

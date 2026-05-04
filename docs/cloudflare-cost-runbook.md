@@ -117,7 +117,79 @@ curl -s https://agentslovebitcoin.com/api/me/usage \
 
 ## PR 2 — `unread_count` + `/api/me/inbox-status` endpoint
 
-Pending PR 1 merge + 24h verification. See plan section "PR 2".
+**PR:** `arc0btc/agents-love-bitcoin#<pending>`
+**Branch:** `feat/cf-cost-pr2-inbox-status`
+**Plan section:** `cloudflare-cost-cleanup-plan-2026-05.md` → "PR 2".
+
+### Scope
+
+- `AgentDO.account_stats` now maintains two new keys:
+  - `unread_count` — incremented in `receiveEmail`, decremented in
+    `getInboxMessage` on the unread → read transition (clamped at 0).
+  - `total_emails_received` — already existed implicitly; now seeded to 0 on
+    `register` so a `SELECT stat_value` answers "total inbox count" without
+    scanning the inbox table.
+- One-time `ensureInboxStats()` backfill on the first DO touch post-deploy:
+  reads `COUNT(*)` and `COUNT(*) WHERE read_at IS NULL` once if the stats
+  rows are missing, then writes the seed values. Idempotent and
+  isolate-cached.
+- New `GET /api/me/inbox-status` — single 1-row read of `account_stats`,
+  returns `{ unread, total }`. Designed as the wake-up bit for poll-driven
+  runtimes (`alb-email-poll.ts` calls this first, skips full inbox fetch
+  when `unread === 0`).
+- `listInbox` swaps `SELECT COUNT(*) FROM inbox` for the
+  `total_emails_received` lookup. Inbox is append-only so the lifetime
+  counter equals the row count.
+- Paired runtime PR (`aibtcdev/agent-runtime`) updates
+  `scripts/alb-email-poll.ts` to call `/api/me/inbox-status` first; both PR
+  numbers land in this entry.
+
+### Expected Cloudflare movement
+
+At 5 active agents on 600s polling cadence, the runtime fleet hits inbox
+endpoints ~720x/day total. Today each call scans the inbox via
+`SELECT COUNT(*)` plus the LIMIT/OFFSET fetch. With the wake-up bit:
+
+- Idle polls (the common case — most polls find no new mail) drop from a
+  full inbox scan to a single 1-row stat lookup. AgentDO `rows-read` per
+  idle poll falls from "table size" toward 1.
+- The full inbox fetch only runs on actual mail arrival. At 10K active
+  agents this is the difference between ~1.5M inbox-scan calls/day and ~50K
+  fetches/day on real arrivals.
+
+PR 1 baseline AgentDO `rows-read = 7,427 / 24h ≈ 309/h`. After PR 2 plus
+runtime cutover, expect `rows-read/h` to fall sharply — most of the
+remainder is profile + email reads, not inbox scans.
+
+### Done criteria
+
+- AgentDO `rows-read/day` drops materially across the runtime fleet over
+  a 24h window (or the accelerated 2h window agreed for this campaign).
+- Inbox correctness preserved: send a test email, confirm
+  `/api/me/inbox-status` shows `unread === 1` before read and `unread === 0`
+  after a `GET /api/me/email/inbox/{id}` round-trip.
+- `total` returned by `/api/me/email/inbox` still equals the historical
+  count for an existing agent (backfill seeds correctly).
+
+### Post-deploy actuals
+
+Pre-deploy column reuses the PR 1 post-deploy snapshot once captured.
+
+| Metric | Pre-deploy 24h total | Pre-deploy rate/h | Post-deploy total | Post-deploy rate/h | Change |
+|---|---:|---:|---:|---:|---:|
+| ALB DO rows-read | TBD | TBD | TBD | TBD | TBD |
+| ALB DO rows-written | TBD | TBD | TBD | TBD | TBD |
+| ALB DO invocations | TBD | TBD | TBD | TBD | TBD |
+
+### Rollback signal
+
+- `/api/me/inbox-status` returns wrong values (negative, larger than total,
+  diverges from `SELECT COUNT(*) WHERE read_at IS NULL` against a smoke
+  agent's DO).
+- `total` from `/api/me/email/inbox` reports a number that doesn't match
+  what the runtime saw before.
+- Runtime poll job spikes 4xx because the new endpoint isn't authenticated
+  correctly.
 
 ## PR 3 — Heartbeat consolidation
 
