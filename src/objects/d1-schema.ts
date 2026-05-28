@@ -1,17 +1,12 @@
 /**
- * D1 schema for the ALB agent directory.
+ * D1 schema for the ALB agent directory — the sole source of truth for agent
+ * registration, address resolution, and tier lookups. Lives in Cloudflare D1
+ * so directory lookups scale across isolates without a single-shard DO
+ * bottleneck.
  *
- * Mirrors the GlobalDO directory tables (agent_index + address_resolution)
- * but in Cloudflare D1 so directory lookups scale across isolates without
- * a single-shard DO bottleneck.
- *
- * Key differences from GLOBAL_DO_SCHEMA:
- *   - Table is named `agents` (not `agent_index`) to avoid confusion
- *   - address_resolution.email_address has a UNIQUE constraint — this closes
- *     the registration TOCTOU race (finding #4): D1 enforces uniqueness
- *     atomically at the database level rather than relying on a read-then-write
- *     check in application code.
- *   - No global_stats table — stats stay on GlobalDO for now.
+ * Note: `address_resolution.email_address` carries a UNIQUE constraint that
+ * closes the registration TOCTOU race — D1 enforces uniqueness atomically at
+ * the database level rather than relying on a read-then-write check in code.
  *
  * Drift guard: D1_DIRECTORY_EXPECTED_INDEXES must stay in sync with all
  * CREATE INDEX statements below. The schema-health D1 section and its tests
