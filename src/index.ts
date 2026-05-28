@@ -19,7 +19,6 @@ import type { Env, AppVariables } from "./lib/types";
 
 // Re-export Durable Object classes for wrangler
 export { AgentDO } from "./objects/agent-do";
-export { GlobalDO } from "./objects/global-do";
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 

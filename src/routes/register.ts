@@ -11,7 +11,7 @@
  * 7. Check existing registration (idempotent — return existing profile if found)
  * 8. Check name uniqueness
  * 9. Create AgentDO (profile + email + stats)
- * 10. Update GlobalDO (directory index + address resolution + stats)
+ * 10. Index agent in D1 directory (address resolution + registration record)
  * 11. Return success (201 Created)
  */
 
@@ -207,7 +207,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     email: { email_address: string; provisioned_at: string };
   };
 
-  // ── Step 10: Index agent in D1 directory (dual-writes to GlobalDO internally) ──
+  // ── Step 10: Index agent in D1 directory ──────────────────────────────────────
   const indexResult = await indexAgent(c.env, {
     btcAddress,
     stxAddress,

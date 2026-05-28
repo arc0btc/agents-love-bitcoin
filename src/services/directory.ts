@@ -1,22 +1,10 @@
 /**
  * D1 directory service — all agent directory reads and writes go through here.
  *
- * Replaces direct GlobalDO HTTP calls in routes and middleware. GlobalDO remains
- * the fallback source of truth during the lazy backfill window (until Phase 7
- * retires the GlobalDO binding). On a D1 miss the service falls back to GlobalDO
- * and, where a full row is available, writes it back to D1 (write-through).
- *
- * Backfill strategy:
- *   - indexAgent: full dual-write — D1 first (UNIQUE enforced), then GlobalDO.
- *   - resolveByEmailLocalPart / isRegistered: D1 miss falls back to GlobalDO;
- *     no write-through because we can't reconstruct a complete row from the
- *     lightweight GlobalDO HTTP responses (missing stx_address, aibtc_name etc.).
- *     Full population happens naturally via the indexAgent write path.
- *   - getAgentTier: D1 miss falls back to GlobalDO tier endpoint; no write-through
- *     because the tier endpoint returns the string label, not the numeric level
- *     needed for a complete agents row insert.
- *   - isEmailLocalPartTaken: D1 miss falls back to GlobalDO to catch rows that
- *     haven't yet been written to D1.
+ * GlobalDO has been retired. D1 (`alb-directory`) is the sole source of truth
+ * for agent registration, address resolution, and tier lookups. On a D1 miss
+ * each function returns a safe default (null / false / "registered") rather
+ * than falling back to a secondary store.
  */
 
 import { D1_DIRECTORY_SCHEMA } from "../objects/d1-schema";
@@ -47,20 +35,11 @@ export async function ensureD1Schema(db: D1Database): Promise<void> {
   schemaEnsured = true;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Get the singleton GlobalDO stub from env. */
-function globalDoStub(env: Env): { fetch(req: Request): Promise<Response> } {
-  const id = env.GLOBAL_DO.idFromName("global");
-  return env.GLOBAL_DO.get(id);
-}
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Resolve the rate-limit tier for a BTC address from the D1 directory.
- * Falls back to GlobalDO on D1 miss (no write-through — the tier endpoint
- * doesn't return enough data to reconstruct a full agents row).
+ * Returns "registered" (the safe default) on a D1 miss.
  */
 export async function getAgentTier(env: Env, btcAddress: string): Promise<Tier> {
   await ensureD1Schema(env.DB);
@@ -74,19 +53,12 @@ export async function getAgentTier(env: Env, btcAddress: string): Promise<Tier> 
     return tierFromLevel(row.level);
   }
 
-  // D1 miss — fall back to GlobalDO
-  const resp = await globalDoStub(env).fetch(
-    new Request(`http://internal/agent-tier/${encodeURIComponent(btcAddress)}`)
-  );
-  if (!resp.ok) return "registered";
-  const body = (await resp.json()) as { tier?: Tier };
-  return body.tier ?? "registered";
+  return "registered";
 }
 
 /**
  * Resolve an email local part to a BTC address.
- * Falls back to GlobalDO on D1 miss (no write-through — the resolve endpoint
- * doesn't return stx_address / aibtc_name needed for a full row insert).
+ * Returns null on a D1 miss.
  */
 export async function resolveByEmailLocalPart(
   env: Env,
@@ -105,19 +77,12 @@ export async function resolveByEmailLocalPart(
     return { btcAddress: row.btc_address };
   }
 
-  // D1 miss — fall back to GlobalDO
-  const resp = await globalDoStub(env).fetch(
-    new Request(`http://internal/resolve-email-local/${encodeURIComponent(localPart)}`)
-  );
-  if (!resp.ok) return null;
-  const body = (await resp.json()) as { btcAddress?: string };
-  return body.btcAddress ? { btcAddress: body.btcAddress } : null;
+  return null;
 }
 
 /**
  * Check if a BTC address is registered.
- * Falls back to GlobalDO on D1 miss (no write-through — full row backfill
- * happens via the indexAgent write path).
+ * Returns false on a D1 miss.
  */
 export async function isRegistered(env: Env, btcAddress: string): Promise<boolean> {
   await ensureD1Schema(env.DB);
@@ -127,21 +92,12 @@ export async function isRegistered(env: Env, btcAddress: string): Promise<boolea
     .bind(btcAddress)
     .first<{ "1": number }>();
 
-  if (row !== null) return true;
-
-  // D1 miss — fall back to GlobalDO
-  const resp = await globalDoStub(env).fetch(
-    new Request(`http://internal/is-registered/${btcAddress}`)
-  );
-  if (!resp.ok) return false;
-  const body = (await resp.json()) as { registered?: boolean };
-  return body.registered === true;
+  return row !== null;
 }
 
 /**
  * Check if an email local part is already taken by another agent.
- * Always falls back to GlobalDO if D1 has no row for the email, because
- * the row may exist in GlobalDO but not yet in D1 during the backfill window.
+ * Returns false on a D1 miss.
  */
 export async function isEmailLocalPartTaken(
   env: Env,
@@ -157,30 +113,17 @@ export async function isEmailLocalPartTaken(
     .bind(email, excludeBtcAddress)
     .first<{ "1": number }>();
 
-  if (d1Row !== null) return true;
-
-  // D1 says not taken — but check GlobalDO to catch rows not yet in D1
-  const resp = await globalDoStub(env).fetch(
-    new Request(
-      `http://internal/is-email-local-taken?local=${encodeURIComponent(localPart)}&exclude=${encodeURIComponent(excludeBtcAddress)}`
-    )
-  );
-  if (!resp.ok) return false;
-  const body = (await resp.json()) as { taken?: boolean };
-  return body.taken === true;
+  return d1Row !== null;
 }
 
 /**
- * Index a newly registered agent in both D1 and GlobalDO.
+ * Index a newly registered agent in D1.
  *
- * D1 is written first with the UNIQUE(email_address) constraint acting as the
- * atomic gate against concurrent registrations with the same name (TOCTOU fix).
- * If D1 raises a UNIQUE constraint violation on email_address, we surface it
- * as { conflict: true } — the caller should return 409.
- *
- * GlobalDO is written second for backwards compatibility and as the fallback
- * source of truth during the backfill window. A GlobalDO failure is logged but
- * does not roll back the D1 write — D1 is now primary.
+ * D1 is the sole store for agent registration. The UNIQUE(email_address)
+ * constraint on address_resolution acts as the atomic gate against concurrent
+ * registrations with the same name (TOCTOU fix). If D1 raises a UNIQUE
+ * constraint violation on email_address, we surface it as { conflict: true } —
+ * the caller should return 409.
  */
 export async function indexAgent(
   env: Env,
@@ -218,21 +161,6 @@ export async function indexAgent(
       return { conflict: true };
     }
     throw err; // unexpected error — propagate
-  }
-
-  // Dual-write to GlobalDO (backfill compatibility — do not fail the request if this fails)
-  try {
-    const stub = globalDoStub(env);
-    await stub.fetch(
-      new Request("http://internal/index-agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(opts),
-      })
-    );
-  } catch {
-    // GlobalDO write failure is non-fatal: D1 is now primary.
-    // Production observability will surface this via Cloudflare Workers logs.
   }
 
   return { conflict: false };

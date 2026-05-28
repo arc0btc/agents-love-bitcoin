@@ -2,9 +2,9 @@
  * Admin routes — protected by X-Admin-Key header.
  *
  * GET /api/admin/schema-health
- *   Introspects GlobalDO and AgentDO for missing indexes and unexpected scan
- *   query plans. Returns a structured JSON response keyed by component so a
- *   D1 section can be appended naturally in Phase 5 without breaking callers.
+ *   Introspects AgentDO and D1 for missing indexes and unexpected scan
+ *   query plans. Returns a structured JSON response keyed by component.
+ *   GlobalDO has been retired; the response shape is { agentDo, d1 }.
  */
 
 import { Hono } from "hono";
@@ -26,40 +26,10 @@ admin.get("/admin/schema-health", async (c) => {
     );
   }
 
-  // --- GlobalDO health ---
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-
-  const globalResp = await globalDo.fetch(
-    new Request("http://internal/schema-health")
-  );
-  if (!globalResp.ok) {
-    return c.json(
-      { ok: false, error: { code: "INTERNAL_ERROR", message: "GlobalDO schema-health fetch failed" } },
-      500
-    );
-  }
-  const globalHealth = await globalResp.json() as {
-    missingIndexes: string[];
-    unexpectedScans: string[];
-    plans: Record<string, unknown[]>;
-    rowCounts: Record<string, number>;
-  };
-
   // --- AgentDO health ---
-  // Use the first registered agent's BTC address if one exists; otherwise use a
-  // synthetic probe key ("schema-health-probe") so the DO self-initialises with
-  // an empty-but-healthy schema regardless of registration count.
-  let agentProbeKey = "schema-health-probe";
-  if (globalHealth.rowCounts["agent_index"] > 0) {
-    const firstAgentResp = await globalDo.fetch(
-      new Request("http://internal/first-agent")
-    );
-    if (firstAgentResp.ok) {
-      const { btcAddress } = await firstAgentResp.json() as { btcAddress: string };
-      if (btcAddress) agentProbeKey = btcAddress;
-    }
-  }
+  // Use a synthetic probe key so the DO self-initialises with an empty-but-healthy
+  // schema regardless of registration count.
+  const agentProbeKey = "schema-health-probe";
 
   const agentDoId = c.env.AGENT_DO.idFromName(agentProbeKey);
   const agentDo = c.env.AGENT_DO.get(agentDoId);
@@ -102,6 +72,8 @@ admin.get("/admin/schema-health", async (c) => {
   } | { error: string };
 
   try {
+    await ensureD1Schema(c.env.DB);
+
     // Live named indexes in D1 (excludes sqlite_ internal ones)
     const liveResult = await c.env.DB
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'")
@@ -159,98 +131,8 @@ admin.get("/admin/schema-health", async (c) => {
   }
 
   return okResponse(c, {
-    globalDo: globalHealth,
     agentDo: agentHealth,
     d1: d1Health,
-  });
-});
-
-admin.post("/admin/backfill-directory", async (c) => {
-  // Inline admin-key check — same pattern as schema-health above
-  const adminKey = c.req.header("X-Admin-Key");
-  const isAdmin = Boolean(adminKey && c.env?.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY);
-  if (!isAdmin) {
-    return c.json(
-      { ok: false, error: { code: "UNAUTHORIZED", message: "Invalid or missing admin key" } },
-      401
-    );
-  }
-
-  // Ensure D1 schema is present before writing
-  await ensureD1Schema(c.env.DB);
-
-  // Fetch full directory dump from GlobalDO
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-
-  const dumpResp = await globalDo.fetch(new Request("http://internal/dump-directory"));
-  if (!dumpResp.ok) {
-    return c.json(
-      { ok: false, error: { code: "INTERNAL_ERROR", message: "GlobalDO dump-directory fetch failed" } },
-      500
-    );
-  }
-
-  const dump = await dumpResp.json() as {
-    agents: Array<{
-      btc_address: string;
-      stx_address: string;
-      aibtc_name: string | null;
-      display_name: string | null;
-      level: number;
-      indexed_at: string;
-    }>;
-    resolutions: Array<{
-      btc_address: string;
-      stx_address: string;
-      aibtc_name: string;
-      email_address: string;
-    }>;
-  };
-
-  let agentsWritten = 0;
-  let resolutionsWritten = 0;
-
-  // Write agents — INSERT OR REPLACE so re-runs are idempotent
-  for (const row of dump.agents) {
-    const result = await c.env.DB
-      .prepare(
-        `INSERT OR REPLACE INTO agents (btc_address, stx_address, aibtc_name, display_name, level, indexed_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .bind(row.btc_address, row.stx_address, row.aibtc_name, row.display_name, row.level, row.indexed_at)
-      .run();
-    if (result.meta?.changes && result.meta.changes > 0) agentsWritten++;
-  }
-
-  // Write resolutions — INSERT OR IGNORE so a UNIQUE(email_address) conflict is a silent no-op
-  for (const row of dump.resolutions) {
-    const result = await c.env.DB
-      .prepare(
-        `INSERT OR IGNORE INTO address_resolution (btc_address, stx_address, aibtc_name, email_address)
-         VALUES (?, ?, ?, ?)`
-      )
-      .bind(row.btc_address, row.stx_address, row.aibtc_name, row.email_address)
-      .run();
-    if (result.meta?.changes && result.meta.changes > 0) resolutionsWritten++;
-  }
-
-  // Row counts post-write for observability
-  const agentsCount = await c.env.DB
-    .prepare("SELECT COUNT(*) AS cnt FROM agents")
-    .first<{ cnt: number }>();
-  const resolutionsCount = await c.env.DB
-    .prepare("SELECT COUNT(*) AS cnt FROM address_resolution")
-    .first<{ cnt: number }>();
-
-  return okResponse(c, {
-    scanned: dump.agents.length + dump.resolutions.length,
-    agentsWritten,
-    resolutionsWritten,
-    d1RowCounts: {
-      agents: agentsCount?.cnt ?? 0,
-      address_resolution: resolutionsCount?.cnt ?? 0,
-    },
   });
 });
 

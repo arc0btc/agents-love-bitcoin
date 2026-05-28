@@ -4,9 +4,9 @@
  * - `publicRateLimitMiddleware`: no-auth routes (manifest / llms / onboarding).
  *   Keyed by client IP against `RL_PUBLIC`.
  * - `tieredRateLimitMiddleware`: authenticated routes. Resolves the agent's tier
- *   from `GlobalDO.agent_index.level` (cached in a worker-isolate `Map` for 60s
- *   so 99% of requests skip the DO round-trip) and consults the matching binding
- *   keyed by btc-address. Admin API key bypasses.
+ *   from the D1 directory (cached in a worker-isolate `Map` for 60s so 99% of
+ *   requests skip the D1 round-trip) and consults the matching binding keyed by
+ *   btc-address. Admin API key bypasses.
  *
  * The previous KV/AgentDO-based per-request counter is gone: counting happens
  * inside the binding, so there are no per-request KV writes and no DO writes
@@ -73,7 +73,7 @@ async function resolveTier(c: Parameters<ALBMiddleware>[0], btcAddress: string):
     return cached.tier;
   }
 
-  // Resolve via D1 directory service (falls back to GlobalDO on D1 miss)
+  // Resolve via D1 directory service (returns "registered" default on miss)
   const tier = await getAgentTier(c.env, btcAddress);
   tierCache.set(btcAddress, { tier, fetchedAt: now });
   return tier;

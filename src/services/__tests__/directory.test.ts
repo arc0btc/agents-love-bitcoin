@@ -4,6 +4,9 @@
  * Uses a minimal in-memory D1Database mock (no external SQLite binary needed)
  * that tracks table state and simulates the UNIQUE constraint on
  * address_resolution.email_address.
+ *
+ * GlobalDO has been retired. All functions are D1-only; D1 misses return safe
+ * defaults (null / false / "registered").
  */
 
 import { describe, it, expect, beforeEach } from "bun:test";
@@ -222,68 +225,10 @@ function createMockD1(): {
   return { db, agents, addressResolution, emailIndex };
 }
 
-/** Build a minimal GlobalDO stub that returns canned responses. */
-function createMockGlobalDo(opts: {
-  registeredAddresses?: Set<string>;
-  tierMap?: Map<string, string>;
-  emailResolution?: Map<string, string>; // email_local → btcAddress
-  takenEmails?: Set<string>; // email addresses taken (raw email, not local)
-}) {
-  const {
-    registeredAddresses = new Set(),
-    tierMap = new Map(),
-    emailResolution = new Map(),
-    takenEmails = new Set(),
-  } = opts;
-
-  return {
-    idFromName: (_name: string) => ({}),
-    get: (_id: unknown) => ({
-      async fetch(req: Request): Promise<Response> {
-        const url = new URL(req.url);
-
-        if (url.pathname.startsWith("/is-registered/")) {
-          const btc = url.pathname.split("/is-registered/")[1];
-          return Response.json({ registered: registeredAddresses.has(btc) });
-        }
-
-        if (url.pathname.startsWith("/agent-tier/")) {
-          const btc = decodeURIComponent(url.pathname.split("/agent-tier/")[1]);
-          const tier = tierMap.get(btc) ?? "registered";
-          return Response.json({ tier });
-        }
-
-        if (url.pathname.startsWith("/resolve-email-local/")) {
-          const local = url.pathname.split("/resolve-email-local/")[1];
-          const btc = emailResolution.get(local);
-          if (!btc) return new Response("Not Found", { status: 404 });
-          return Response.json({ btcAddress: btc });
-        }
-
-        if (url.pathname.startsWith("/is-email-local-taken")) {
-          const local = url.searchParams.get("local") ?? "";
-          const email = `${local}@agentslovebitcoin.com`;
-          return Response.json({ taken: takenEmails.has(email) });
-        }
-
-        if (url.pathname === "/index-agent") {
-          return Response.json({ ok: true });
-        }
-
-        return new Response("Not Found", { status: 404 });
-      },
-    }),
-  };
-}
-
-/** Build a minimal Env for testing. */
-function buildEnv(
-  db: D1Database,
-  globalDoOpts: Parameters<typeof createMockGlobalDo>[0] = {}
-): Env {
+/** Build a minimal Env for testing (D1 only — no GLOBAL_DO). */
+function buildEnv(db: D1Database): Env {
   return {
     DB: db,
-    GLOBAL_DO: createMockGlobalDo(globalDoOpts),
   } as unknown as Env;
 }
 
@@ -385,25 +330,12 @@ describe("isRegistered", () => {
     expect(result).toBe(true);
   });
 
-  it("returns false when agent is not in D1 and not in GlobalDO (read-through miss)", async () => {
+  it("returns false on D1 miss (no GlobalDO fallback)", async () => {
     const mock = createMockD1();
-    const env = buildEnv(mock.db, {
-      registeredAddresses: new Set(), // not registered anywhere
-    });
+    const env = buildEnv(mock.db);
 
     const result = await isRegistered(env, "bc1qnobody");
     expect(result).toBe(false);
-  });
-
-  it("D1 miss → falls back to GlobalDO → returns true when GlobalDO has the agent", async () => {
-    const mock = createMockD1();
-    // D1 is empty — agent only in GlobalDO
-    const env = buildEnv(mock.db, {
-      registeredAddresses: new Set(["bc1qglobaldo"]),
-    });
-
-    const result = await isRegistered(env, "bc1qglobaldo");
-    expect(result).toBe(true);
   });
 });
 
@@ -418,26 +350,12 @@ describe("resolveByEmailLocalPart", () => {
     expect(result!.btcAddress).toBe("bc1qtest1");
   });
 
-  it("returns null when email is not in D1 and not in GlobalDO", async () => {
+  it("returns null on D1 miss (no GlobalDO fallback)", async () => {
     const mock = createMockD1();
-    const env = buildEnv(mock.db, {
-      emailResolution: new Map(), // nobody
-    });
+    const env = buildEnv(mock.db);
 
     const result = await resolveByEmailLocalPart(env, "unknown-agent");
     expect(result).toBeNull();
-  });
-
-  it("D1 miss → falls back to GlobalDO → returns btcAddress from GlobalDO", async () => {
-    const mock = createMockD1();
-    // D1 is empty
-    const env = buildEnv(mock.db, {
-      emailResolution: new Map([["globaldo-agent", "bc1qglobal"]]),
-    });
-
-    const result = await resolveByEmailLocalPart(env, "globaldo-agent");
-    expect(result).not.toBeNull();
-    expect(result!.btcAddress).toBe("bc1qglobal");
   });
 });
 
@@ -474,17 +392,7 @@ describe("getAgentTier", () => {
     expect(tier).toBe("registered");
   });
 
-  it("D1 miss → falls back to GlobalDO → returns correct tier", async () => {
-    const mock = createMockD1();
-    const env = buildEnv(mock.db, {
-      tierMap: new Map([["bc1qglobaldo", "genesis"]]),
-    });
-
-    const tier = await getAgentTier(env, "bc1qglobaldo");
-    expect(tier).toBe("genesis");
-  });
-
-  it("D1 miss + GlobalDO miss → returns 'registered' (safe default)", async () => {
+  it("D1 miss → returns 'registered' (safe default)", async () => {
     const mock = createMockD1();
     const env = buildEnv(mock.db);
 
@@ -524,15 +432,12 @@ describe("isEmailLocalPartTaken", () => {
     expect(taken).toBe(false);
   });
 
-  it("D1 miss → falls back to GlobalDO → returns true when GlobalDO says taken", async () => {
+  it("returns false on D1 miss (no GlobalDO fallback)", async () => {
     const mock = createMockD1();
-    // D1 has nothing
-    const env = buildEnv(mock.db, {
-      takenEmails: new Set(["globaldo-taken@agentslovebitcoin.com"]),
-    });
+    const env = buildEnv(mock.db);
 
-    const taken = await isEmailLocalPartTaken(env, "globaldo-taken", "bc1qsomeone");
-    expect(taken).toBe(true);
+    const taken = await isEmailLocalPartTaken(env, "nobody-has-this", "bc1qsomeone");
+    expect(taken).toBe(false);
   });
 });
 

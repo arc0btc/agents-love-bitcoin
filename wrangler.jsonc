@@ -32,11 +32,10 @@
     { "binding": "ALB_KV", "id": "a66764f222074c4192d0d4a69a90063f" }
   ],
 
-  // Durable Object bindings — per-address AgentDO + singleton GlobalDO
+  // Durable Object bindings — per-address AgentDO (GlobalDO retired in Phase 8)
   "durable_objects": {
     "bindings": [
-      { "name": "AGENT_DO", "class_name": "AgentDO" },
-      { "name": "GLOBAL_DO", "class_name": "GlobalDO" }
+      { "name": "AGENT_DO", "class_name": "AgentDO" }
     ]
   },
 
@@ -47,7 +46,8 @@
       "tag": "v2",
       "renamed_classes": [{ "from": "AlbDO", "to": "AgentDO" }],
       "new_sqlite_classes": ["GlobalDO"]
-    }
+    },
+    { "tag": "v3", "deleted_classes": ["GlobalDO"] }
   ],
 
 

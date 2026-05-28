@@ -24,7 +24,7 @@ me.use("/me/*", btcAuthMiddleware, tieredRateLimitMiddleware);
 me.get("/me/profile", async (c) => {
   const btcAddress = c.get("btcAddress")!;
 
-  // Check registration via D1 directory service (falls back to GlobalDO on miss)
+  // Check registration via D1 directory service
   const registered = await isRegistered(c.env, btcAddress);
 
   if (!registered) {
@@ -56,7 +56,7 @@ me.get("/me/profile", async (c) => {
 me.get("/me/email", async (c) => {
   const btcAddress = c.get("btcAddress")!;
 
-  // Check registration via D1 directory service (falls back to GlobalDO on miss)
+  // Check registration via D1 directory service
   const registered = await isRegistered(c.env, btcAddress);
 
   if (!registered) {

@@ -2,7 +2,7 @@
  * Cloudflare Email Routing handler.
  *
  * Receives inbound mail at *@agentslovebitcoin.com, resolves the recipient
- * AIBTC name via GlobalDO, and stores the message in the agent's AgentDO inbox.
+ * AIBTC name via the D1 directory service, and stores the message in the agent's AgentDO inbox.
  */
 
 import type { Env } from "./lib/types";
@@ -78,7 +78,7 @@ export async function handleEmail(
     return;
   }
 
-  // Resolve email local part → BTC address via D1 directory service (falls back to GlobalDO)
+  // Resolve email local part → BTC address via D1 directory service
   const resolved = await resolveByEmailLocalPart(env, localPart);
 
   if (!resolved) {
