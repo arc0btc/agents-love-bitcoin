@@ -50,6 +50,11 @@
     }
   ],
 
+
+  // D1 database binding — ALB agent directory (created in Phase 6)
+  "d1_databases": [
+    { "binding": "DB", "database_name": "alb-directory", "database_id": "00000000-0000-0000-0000-000000000000" }
+  ],
   /**
    * Secrets (set via `wrangler secret put`):
    * - ADMIN_API_KEY — Admin endpoint auth

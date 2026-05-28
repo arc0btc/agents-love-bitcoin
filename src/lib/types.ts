@@ -5,6 +5,9 @@ export interface Env {
   ALB_KV: KVNamespace;
   AGENT_DO: DurableObjectNamespace;
   GLOBAL_DO: DurableObjectNamespace;
+  /** D1 agent directory database — alb-directory (provisioned in Phase 6;
+   * wrangler.jsonc uses a placeholder database_id until then). */
+  DB: D1Database;
   /** Rate-limit bindings (Cloudflare `ratelimits` API). Optional so dev/test
    * can run without them; `tieredRateLimitMiddleware` fails closed if the
    * authenticated bindings go missing in production. */
