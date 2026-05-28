@@ -27,7 +27,7 @@ import type { Env, Tier } from "../lib/types";
 // ── Module-level schema init guard (one execution per isolate) ────────────────
 let schemaEnsured = false;
 
-async function ensureD1Schema(db: D1Database): Promise<void> {
+export async function ensureD1Schema(db: D1Database): Promise<void> {
   if (schemaEnsured) return;
   await db.exec(D1_DIRECTORY_SCHEMA);
   schemaEnsured = true;
