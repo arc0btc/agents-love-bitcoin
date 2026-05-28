@@ -6,6 +6,12 @@ import {
   AGENT_DO_EXPECTED_INDEXES,
 } from "../schema";
 
+describe("AGENT_DO_SCHEMA", () => {
+  it("does not contain api_usage", () => {
+    expect(AGENT_DO_SCHEMA).not.toContain("api_usage");
+  });
+});
+
 describe("GLOBAL_DO_SCHEMA", () => {
   it("contains the idx_addr_email index name", () => {
     expect(GLOBAL_DO_SCHEMA).toContain("idx_addr_email");
