@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS address_resolution (
   email_address  TEXT NOT NULL
 );
 
+-- idx_addr_email: turns WHERE email_address = ? into a point-lookup.
+-- Superseded by D1 in Phase 5+ but kept until the GlobalDO binding retires (Phase 7).
+CREATE INDEX IF NOT EXISTS idx_addr_email ON address_resolution(email_address);
+
 CREATE TABLE IF NOT EXISTS global_stats (
   stat_key       TEXT PRIMARY KEY,
   stat_value     INTEGER DEFAULT 0,
