@@ -17,9 +17,10 @@ export const SIP018_DOMAIN = {
 import type { Tier } from "./types";
 
 /**
- * Documented per-minute rate ceilings per tier. Enforcement happens through
- * the Cloudflare `ratelimits` bindings declared in `wrangler.jsonc`; keep the
- * `simple.limit` values there in sync with these numbers when adjusting tiers.
+ * Documented per-minute rate ceilings per tier. MUST stay in sync with
+ * the `simple.limit` values in the `ratelimits` binding in `wrangler.jsonc`
+ * by hand — change BOTH files together or the enforced limits will drift.
+ * See also: src/lib/__tests__/rate-limits.test.ts (lockstep drift guard).
  * Public applies to no-auth endpoints (manifest / llms / onboarding).
  */
 export const RATE_LIMITS = {
