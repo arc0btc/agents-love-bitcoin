@@ -120,6 +120,52 @@ export class GlobalDO extends DurableObject<Env> {
   }
 
   /**
+   * Export the full contents of both directory tables for bulk D1 backfill.
+   * Returns all rows from `agent_index` and `address_resolution`.
+   * No pagination — intended for ~10 rows at genesis scale.
+   */
+  async exportDirectory(): Promise<{
+    agents: Array<{
+      btc_address: string;
+      stx_address: string;
+      aibtc_name: string | null;
+      display_name: string | null;
+      level: number;
+      indexed_at: string;
+    }>;
+    resolutions: Array<{
+      btc_address: string;
+      stx_address: string;
+      aibtc_name: string;
+      email_address: string;
+    }>;
+  }> {
+    this.ensureSchema();
+
+    const agents = this.ctx.storage.sql.exec(
+      `SELECT btc_address, stx_address, aibtc_name, display_name, level, indexed_at FROM agent_index`
+    ).toArray() as unknown as Array<{
+      btc_address: string;
+      stx_address: string;
+      aibtc_name: string | null;
+      display_name: string | null;
+      level: number;
+      indexed_at: string;
+    }>;
+
+    const resolutions = this.ctx.storage.sql.exec(
+      `SELECT btc_address, stx_address, aibtc_name, email_address FROM address_resolution`
+    ).toArray() as unknown as Array<{
+      btc_address: string;
+      stx_address: string;
+      aibtc_name: string;
+      email_address: string;
+    }>;
+
+    return { agents, resolutions };
+  }
+
+  /**
    * Introspect the GlobalDO schema health: missing indexes, unexpected scan
    * query plans, and row counts. Called by GET /api/admin/schema-health.
    */
@@ -228,6 +274,11 @@ export class GlobalDO extends DurableObject<Env> {
     if (url.pathname === "/schema-health" && request.method === "GET") {
       const health = await this.schemaHealth();
       return Response.json(health);
+    }
+
+    if (url.pathname === "/dump-directory" && request.method === "GET") {
+      const dump = await this.exportDirectory();
+      return Response.json(dump);
     }
 
     if (url.pathname === "/first-agent" && request.method === "GET") {
