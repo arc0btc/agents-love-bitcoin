@@ -13,6 +13,7 @@
  * just for the rate gate.
  */
 import type { MiddlewareHandler } from "hono";
+import { getAgentTier } from "../services/directory";
 import { errorResponse } from "../lib/helpers";
 import { RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables, Tier } from "../lib/types";
@@ -21,10 +22,6 @@ type ALBMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: AppVariables 
 
 const TIER_CACHE_TTL_MS = 60_000;
 const tierCache = new Map<string, { tier: Tier; fetchedAt: number }>();
-
-interface AgentIndexRow {
-  level: number;
-}
 
 function rateLimited(
   c: Parameters<ALBMiddleware>[0],
@@ -76,16 +73,8 @@ async function resolveTier(c: Parameters<ALBMiddleware>[0], btcAddress: string):
     return cached.tier;
   }
 
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-  const resp = await globalDo.fetch(
-    new Request(`http://internal/agent-tier/${encodeURIComponent(btcAddress)}`)
-  );
-  let tier: Tier = "registered";
-  if (resp.ok) {
-    const body = (await resp.json()) as { tier?: Tier };
-    if (body.tier) tier = body.tier;
-  }
+  // Resolve via D1 directory service (falls back to GlobalDO on D1 miss)
+  const tier = await getAgentTier(c.env, btcAddress);
   tierCache.set(btcAddress, { tier, fetchedAt: now });
   return tier;
 }

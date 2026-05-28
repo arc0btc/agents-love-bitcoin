@@ -19,6 +19,7 @@ import { Hono } from "hono";
 import type { AibtcAgent } from "aibtc-genesis-gate";
 import { resolveGenesisAgent } from "../services/agent-resolver";
 import { resolveAgentName } from "../services/name-resolver";
+import { isRegistered, isEmailLocalPartTaken, indexAgent } from "../services/directory";
 import { dualSigAuthMiddleware } from "../middleware/auth";
 import { okResponse, errorResponse, tierFromLevel } from "../lib/helpers";
 import { aibtcNameToEmailLocal, aibtcNameToEmail } from "../lib/names";
@@ -123,16 +124,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   const emailAddress = aibtcNameToEmail(agentName);
 
   // ── Step 7: Check existing registration (idempotent) ──────────────────
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-
-  const isRegResp = await globalDo.fetch(
-    new Request(`http://internal/is-registered/${btcAddress}`)
-  );
-  if (!isRegResp.ok) {
-    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
-  }
-  const { registered } = await isRegResp.json() as { registered: boolean };
+  const registered = await isRegistered(c.env, btcAddress);
 
   if (registered) {
     // Return existing profile (idempotent)
@@ -175,13 +167,7 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
   }
 
   // ── Step 8: Check email uniqueness ────────────────────────────────────
-  const nameCheckResp = await globalDo.fetch(
-    new Request(`http://internal/is-email-local-taken?local=${encodeURIComponent(emailLocal)}&exclude=${encodeURIComponent(btcAddress)}`)
-  );
-  if (!nameCheckResp.ok) {
-    return errorResponse(c, "INTERNAL_ERROR", "Failed to check name uniqueness", 500);
-  }
-  const { taken } = await nameCheckResp.json() as { taken: boolean };
+  const taken = await isEmailLocalPartTaken(c.env, emailLocal, btcAddress);
   if (taken) {
     return errorResponse(
       c,
@@ -221,24 +207,23 @@ register.post("/register", dualSigAuthMiddleware, async (c) => {
     email: { email_address: string; provisioned_at: string };
   };
 
-  // ── Step 10: Update GlobalDO ──────────────────────────────────────────
-  const indexResp = await globalDo.fetch(
-    new Request("http://internal/index-agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        btcAddress,
-        stxAddress,
-        aibtcName: agentName,
-        displayName: agent.bnsName ?? agentName,
-        level: agent.level,
-        emailAddress,
-      }),
-    })
-  );
+  // ── Step 10: Index agent in D1 directory (dual-writes to GlobalDO internally) ──
+  const indexResult = await indexAgent(c.env, {
+    btcAddress,
+    stxAddress,
+    aibtcName: agentName,
+    displayName: agent.bnsName ?? agentName,
+    level: agent.level,
+    emailAddress,
+  });
 
-  if (!indexResp.ok) {
-    return errorResponse(c, "INTERNAL_ERROR", "Agent registered but global indexing failed — retry registration", 500);
+  if (indexResult.conflict) {
+    return errorResponse(
+      c,
+      "CONFLICT",
+      `Email ${emailAddress} already provisioned to another agent`,
+      409
+    );
   }
 
   // ── Step 11: Return success ───────────────────────────────────────────

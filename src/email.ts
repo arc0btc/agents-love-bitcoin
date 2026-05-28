@@ -7,6 +7,7 @@
 
 import type { Env } from "./lib/types";
 import { EMAIL_DOMAIN } from "./lib/constants";
+import { resolveByEmailLocalPart } from "./services/directory";
 
 /** Minimal MIME header parser — extracts text/plain and text/html parts. */
 function parseEmailBody(raw: string): { text: string | null; html: string | null } {
@@ -77,20 +78,15 @@ export async function handleEmail(
     return;
   }
 
-  // Resolve email local part → BTC address via GlobalDO
-  const globalDoId = env.GLOBAL_DO.idFromName("global");
-  const globalDo = env.GLOBAL_DO.get(globalDoId);
+  // Resolve email local part → BTC address via D1 directory service (falls back to GlobalDO)
+  const resolved = await resolveByEmailLocalPart(env, localPart);
 
-  const resolveResp = await globalDo.fetch(
-    new Request(`http://internal/resolve-email-local/${encodeURIComponent(localPart)}`)
-  );
-
-  if (!resolveResp.ok) {
+  if (!resolved) {
     message.setReject(`Unknown recipient: ${localPart}@${EMAIL_DOMAIN}`);
     return;
   }
 
-  const { btcAddress } = await resolveResp.json() as { btcAddress: string };
+  const { btcAddress } = resolved;
 
   // Read the raw email to extract subject and body parts
   const rawStream = message.raw;

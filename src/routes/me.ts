@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { btcAuthMiddleware } from "../middleware/auth";
 import { tieredRateLimitMiddleware } from "../middleware/rate-limit";
+import { isRegistered } from "../services/directory";
 import { okResponse, errorResponse } from "../lib/helpers";
 import { RATE_LIMITS } from "../lib/constants";
 import type { Env, AppVariables } from "../lib/types";
@@ -23,16 +24,8 @@ me.use("/me/*", btcAuthMiddleware, tieredRateLimitMiddleware);
 me.get("/me/profile", async (c) => {
   const btcAddress = c.get("btcAddress")!;
 
-  // Check registration
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-  const regResp = await globalDo.fetch(
-    new Request(`http://internal/is-registered/${btcAddress}`)
-  );
-  if (!regResp.ok) {
-    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
-  }
-  const { registered } = await regResp.json() as { registered: boolean };
+  // Check registration via D1 directory service (falls back to GlobalDO on miss)
+  const registered = await isRegistered(c.env, btcAddress);
 
   if (!registered) {
     return errorResponse(
@@ -63,15 +56,8 @@ me.get("/me/profile", async (c) => {
 me.get("/me/email", async (c) => {
   const btcAddress = c.get("btcAddress")!;
 
-  const globalDoId = c.env.GLOBAL_DO.idFromName("global");
-  const globalDo = c.env.GLOBAL_DO.get(globalDoId);
-  const regResp = await globalDo.fetch(
-    new Request(`http://internal/is-registered/${btcAddress}`)
-  );
-  if (!regResp.ok) {
-    return errorResponse(c, "INTERNAL_ERROR", "Failed to check registration status", 500);
-  }
-  const { registered } = await regResp.json() as { registered: boolean };
+  // Check registration via D1 directory service (falls back to GlobalDO on miss)
+  const registered = await isRegistered(c.env, btcAddress);
 
   if (!registered) {
     return errorResponse(
