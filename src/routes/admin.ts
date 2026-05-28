@@ -16,7 +16,7 @@ const admin = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 admin.get("/admin/schema-health", async (c) => {
   // Inline admin-key check — matches the pattern in register.ts and rate-limit.ts
   const adminKey = c.req.header("X-Admin-Key");
-  const isAdmin = Boolean(adminKey && c.env.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY);
+  const isAdmin = Boolean(adminKey && c.env?.ADMIN_API_KEY && adminKey === c.env.ADMIN_API_KEY);
   if (!isAdmin) {
     return c.json(
       { ok: false, error: { code: "UNAUTHORIZED", message: "Invalid or missing admin key" } },
