@@ -322,7 +322,7 @@ export class AgentDO extends DurableObject<Env> {
     const unexpectedScans: string[] = [];
 
     // Row counts for observability
-    const tables = ["profile", "email", "checkins", "inbox", "api_usage", "account_stats"];
+    const tables = ["profile", "email", "checkins", "inbox", "account_stats"];
     const rowCounts: Record<string, number> = {};
     for (const table of tables) {
       const r = this.ctx.storage.sql.exec(
