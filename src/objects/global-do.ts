@@ -3,7 +3,7 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
-import { GLOBAL_DO_SCHEMA } from "./schema";
+import { GLOBAL_DO_SCHEMA, GLOBAL_DO_EXPECTED_INDEXES } from "./schema";
 import type { Env, Tier } from "../lib/types";
 import { tierFromLevel } from "../lib/helpers";
 import { emailLocalToEmail } from "../lib/names";
@@ -119,6 +119,76 @@ export class GlobalDO extends DurableObject<Env> {
     return rows.length > 0 ? { btcAddress: rows[0].btc_address } : null;
   }
 
+  /**
+   * Introspect the GlobalDO schema health: missing indexes, unexpected scan
+   * query plans, and row counts. Called by GET /api/admin/schema-health.
+   */
+  async schemaHealth(): Promise<{
+    missingIndexes: string[];
+    unexpectedScans: string[];
+    plans: Record<string, unknown[]>;
+    rowCounts: Record<string, number>;
+  }> {
+    this.ensureSchema();
+
+    // Live indexes (excluding SQLite internal ones)
+    const liveRows = this.ctx.storage.sql.exec(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'`
+    ).toArray() as unknown as Array<{ name: string }>;
+    const liveNames = new Set(liveRows.map((r) => r.name));
+
+    const missingIndexes = [...GLOBAL_DO_EXPECTED_INDEXES].filter(
+      (name) => !liveNames.has(name)
+    );
+
+    // Hot query plans — the two WHERE email_address = ? lookups
+    const hotQueries: Record<string, { sql: string; params: unknown[] }> = {
+      "resolveByEmailLocalPart": {
+        sql: `SELECT btc_address FROM address_resolution WHERE email_address = ?`,
+        params: ["test@agentslovebitcoin.com"],
+      },
+      "isEmailLocalPartTaken": {
+        sql: `SELECT 1 FROM address_resolution WHERE email_address = ? AND btc_address != ?`,
+        params: ["test@agentslovebitcoin.com", "bc1test"],
+      },
+    };
+
+    const plans: Record<string, unknown[]> = {};
+    const unexpectedScans: string[] = [];
+
+    for (const [label, { sql, params }] of Object.entries(hotQueries)) {
+      const planRows = this.ctx.storage.sql.exec(
+        `EXPLAIN QUERY PLAN ${sql}`,
+        ...params
+      ).toArray() as unknown as Array<{ detail?: string; [k: string]: unknown }>;
+
+      plans[label] = planRows;
+
+      for (const row of planRows) {
+        const detail = (row.detail ?? "").toUpperCase();
+        // Flag if the plan scans without an index, or uses a temp sort
+        const isBadScan =
+          (detail.includes("SCAN") && !detail.includes("INDEX")) ||
+          detail.includes("USE TEMP B-TREE");
+        if (isBadScan) {
+          unexpectedScans.push(`${label}: ${row.detail ?? ""}`);
+        }
+      }
+    }
+
+    // Row counts for observability
+    const tables = ["agent_index", "address_resolution", "global_stats"];
+    const rowCounts: Record<string, number> = {};
+    for (const table of tables) {
+      const r = this.ctx.storage.sql.exec(
+        `SELECT COUNT(*) AS cnt FROM ${table}`
+      ).one() as unknown as { cnt: number };
+      rowCounts[table] = r.cnt;
+    }
+
+    return { missingIndexes, unexpectedScans, plans, rowCounts };
+  }
+
   /** HTTP handler for internal DO requests. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -153,6 +223,11 @@ export class GlobalDO extends DurableObject<Env> {
       const result = await this.resolveByEmailLocalPart(local);
       if (!result) return new Response("Not Found", { status: 404 });
       return Response.json(result);
+    }
+
+    if (url.pathname === "/schema-health" && request.method === "GET") {
+      const health = await this.schemaHealth();
+      return Response.json(health);
     }
 
     return new Response("Not Found", { status: 404 });

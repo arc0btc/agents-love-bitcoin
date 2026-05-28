@@ -4,7 +4,7 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
-import { AGENT_DO_SCHEMA } from "./schema";
+import { AGENT_DO_SCHEMA, AGENT_DO_EXPECTED_INDEXES } from "./schema";
 import type { Env } from "../lib/types";
 
 interface ProfileRow {
@@ -295,6 +295,45 @@ export class AgentDO extends DurableObject<Env> {
     return this.getEmail();
   }
 
+  /**
+   * Introspect the AgentDO schema health: missing indexes and row counts.
+   * Called by GET /api/admin/schema-health via the /schema-health internal route.
+   */
+  async schemaHealth(): Promise<{
+    missingIndexes: string[];
+    unexpectedScans: string[];
+    plans: Record<string, unknown[]>;
+    rowCounts: Record<string, number>;
+  }> {
+    this.ensureSchema();
+
+    // Live indexes (excluding SQLite internal ones)
+    const liveRows = this.ctx.storage.sql.exec(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'`
+    ).toArray() as unknown as Array<{ name: string }>;
+    const liveNames = new Set(liveRows.map((r) => r.name));
+
+    const missingIndexes = [...AGENT_DO_EXPECTED_INDEXES].filter(
+      (name) => !liveNames.has(name)
+    );
+
+    // AgentDO has no hot email-lookup queries — no EXPLAIN plans needed here
+    const plans: Record<string, unknown[]> = {};
+    const unexpectedScans: string[] = [];
+
+    // Row counts for observability
+    const tables = ["profile", "email", "checkins", "inbox", "api_usage", "account_stats"];
+    const rowCounts: Record<string, number> = {};
+    for (const table of tables) {
+      const r = this.ctx.storage.sql.exec(
+        `SELECT COUNT(*) AS cnt FROM ${table}`
+      ).one() as unknown as { cnt: number };
+      rowCounts[table] = r.cnt;
+    }
+
+    return { missingIndexes, unexpectedScans, plans, rowCounts };
+  }
+
   /** HTTP handler for internal DO requests. */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -352,6 +391,11 @@ export class AgentDO extends DurableObject<Env> {
       const message = await this.getInboxMessage(messageId);
       if (!message) return new Response("Not Found", { status: 404 });
       return Response.json({ message });
+    }
+
+    if (url.pathname === "/schema-health" && request.method === "GET") {
+      const health = await this.schemaHealth();
+      return Response.json(health);
     }
 
     return new Response("Not Found", { status: 404 });

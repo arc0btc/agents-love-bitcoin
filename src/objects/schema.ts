@@ -1,6 +1,9 @@
 /**
  * SQLite schemas for AgentDO and GlobalDO Durable Objects.
  * Matches PRD §4.3 and §4.4 exactly.
+ *
+ * EXPECTED_INDEXES must stay in sync with the CREATE INDEX statements below.
+ * The schema-health endpoint and its tests use these sets to detect drift.
  */
 
 export const AGENT_DO_SCHEMA = `
@@ -62,6 +65,25 @@ CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox(received_at);
 CREATE INDEX IF NOT EXISTS idx_api_usage_endpoint ON api_usage(endpoint);
 CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage(created_at);
 `;
+
+/** Index names declared in AGENT_DO_SCHEMA. */
+export const AGENT_DO_EXPECTED_INDEXES = new Set([
+  "idx_checkins_created",
+  "idx_inbox_received",
+  "idx_api_usage_endpoint",
+  "idx_api_usage_created",
+]);
+
+/** Index names declared in GLOBAL_DO_SCHEMA. */
+export const GLOBAL_DO_EXPECTED_INDEXES = new Set([
+  "idx_addr_email",
+]);
+
+/** Union of all expected index names across both DOs. Used in drift-guard tests. */
+export const EXPECTED_INDEXES = new Set([
+  ...AGENT_DO_EXPECTED_INDEXES,
+  ...GLOBAL_DO_EXPECTED_INDEXES,
+]);
 
 export const GLOBAL_DO_SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_index (
