@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat_v2"],
   "workers_dev": true,
   "preview_urls": true,
-  "observability": { "enabled": false },
+  "observability": { "enabled": true },
 
   // Custom domain
   "routes": [{ "pattern": "agentslovebitcoin.com", "custom_domain": true }],
