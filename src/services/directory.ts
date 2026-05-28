@@ -27,9 +27,23 @@ import type { Env, Tier } from "../lib/types";
 // ── Module-level schema init guard (one execution per isolate) ────────────────
 let schemaEnsured = false;
 
+/**
+ * Split a multi-statement SQL schema into individual statements.
+ * D1's `db.exec()` splits its input on newlines and runs each line as a separate
+ * statement, so it chokes on multi-line `CREATE TABLE` DDL. We instead compile
+ * each statement independently and run them together in a batch.
+ */
+export function splitSchemaStatements(schema: string): string[] {
+  return schema
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 export async function ensureD1Schema(db: D1Database): Promise<void> {
   if (schemaEnsured) return;
-  await db.exec(D1_DIRECTORY_SCHEMA);
+  const statements = splitSchemaStatements(D1_DIRECTORY_SCHEMA);
+  await db.batch(statements.map((s) => db.prepare(s)));
   schemaEnsured = true;
 }
 
