@@ -230,6 +230,15 @@ export class GlobalDO extends DurableObject<Env> {
       return Response.json(health);
     }
 
+    if (url.pathname === "/first-agent" && request.method === "GET") {
+      this.ensureSchema();
+      const rows = this.ctx.storage.sql.exec(
+        `SELECT btc_address FROM agent_index LIMIT 1`
+      ).toArray() as unknown as Array<{ btc_address: string }>;
+      if (rows.length === 0) return new Response("Not Found", { status: 404 });
+      return Response.json({ btcAddress: rows[0].btc_address });
+    }
+
     return new Response("Not Found", { status: 404 });
   }
 }

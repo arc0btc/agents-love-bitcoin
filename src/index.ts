@@ -12,6 +12,7 @@ import registerRoutes from "./routes/register";
 import onboardingRoutes from "./routes/onboarding";
 import meRoutes from "./routes/me";
 import llmsRoutes from "./routes/llms";
+import adminRoutes from "./routes/admin";
 import { handleEmail } from "./email";
 import { VERSION } from "./version";
 import type { Env, AppVariables } from "./lib/types";
@@ -31,6 +32,7 @@ app.route("/api", manifestRoutes);
 app.route("/api", onboardingRoutes);
 app.route("/api", registerRoutes);
 app.route("/api", meRoutes);
+app.route("/api", adminRoutes);
 app.route("/", llmsRoutes);
 
 // Catch-all 404
