@@ -44,16 +44,6 @@ CREATE TABLE IF NOT EXISTS inbox (
   read_at        TEXT
 );
 
-CREATE TABLE IF NOT EXISTS api_usage (
-  id             TEXT PRIMARY KEY,
-  endpoint       TEXT NOT NULL,
-  method         TEXT NOT NULL,
-  status_code    INTEGER NOT NULL,
-  response_ms    INTEGER,
-  paid           INTEGER DEFAULT 0,
-  created_at     TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS account_stats (
   stat_key       TEXT PRIMARY KEY,
   stat_value     INTEGER DEFAULT 0,
@@ -62,16 +52,12 @@ CREATE TABLE IF NOT EXISTS account_stats (
 
 CREATE INDEX IF NOT EXISTS idx_checkins_created ON checkins(created_at);
 CREATE INDEX IF NOT EXISTS idx_inbox_received ON inbox(received_at);
-CREATE INDEX IF NOT EXISTS idx_api_usage_endpoint ON api_usage(endpoint);
-CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage(created_at);
 `;
 
 /** Index names declared in AGENT_DO_SCHEMA. */
 export const AGENT_DO_EXPECTED_INDEXES = new Set([
   "idx_checkins_created",
   "idx_inbox_received",
-  "idx_api_usage_endpoint",
-  "idx_api_usage_created",
 ]);
 
 /** Index names declared in GLOBAL_DO_SCHEMA. */
